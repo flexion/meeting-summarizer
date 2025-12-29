@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Data files (adjust based on what should be tracked)
+data/audio/*.wav
+data/audio/*.mp3
+data/audio/*.m4a
+data/transcripts/*.json
+data/transcripts/*.txt
+
+# Logs
+*.log
+logs/
+
+# Distribution / packaging
+*.whl
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Ruff
+.ruff_cache/
+
+# Coverage
+.coverage.*
+coverage.xml
