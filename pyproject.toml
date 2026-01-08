@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "meeting-summarizer"
 version = "0.1.0"
-description = "AI-powered meeting transcription and summarization tool"
+description = "Real-time audio transcription using faster-whisper and BlackHole for macOS"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -20,28 +20,17 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "anthropic>=0.39.0",
-    "openai>=1.0.0",
-    "pydub>=0.25.0",
+    "faster-whisper>=1.0.0",
+    "pyaudio>=0.2.14",
     "python-dotenv>=1.0.0",
+    "numpy>=1.24.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
-    "pytest-cov>=4.1.0",
-    "pytest-asyncio>=0.23.0",
     "ruff>=0.6.0",
     "mypy>=1.11.0",
-    "black>=24.0.0",
 ]
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["src*"]
-
-[tool.setuptools.package-data]
-"*" = ["py.typed"]
 
 # Ruff configuration
 [tool.ruff]
@@ -70,21 +59,6 @@ ignore = [
 quote-style = "double"
 indent-style = "space"
 
-# Pytest configuration
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-    "--strict-markers",
-    "--strict-config",
-    "-ra",
-    "--cov=src",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-]
-
 # MyPy configuration
 [tool.mypy]
 python_version = "3.10"
@@ -100,20 +74,9 @@ warn_no_return = true
 strict_equality = true
 
 [[tool.mypy.overrides]]
-module = ["pydub.*"]
-ignore_missing_imports = true
-
-# Coverage configuration
-[tool.coverage.run]
-source = ["src"]
-omit = ["*/tests/*", "*/__pycache__/*"]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
+module = [
+    "faster_whisper.*",
+    "pyaudio.*",
+    "numpy.*",
 ]
+ignore_missing_imports = true

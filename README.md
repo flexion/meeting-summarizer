@@ -1,143 +1,291 @@
-# Meeting Summarizer
+# Live Audio Transcription
 
-AI-powered meeting transcription and summarization tool that converts audio recordings into structured text transcripts and generates concise summaries.
+Real-time audio transcription using faster-whisper and BlackHole for macOS. Capture and transcribe audio from your microphone, system audio, or any application in real-time.
 
 ## Features
 
-- Audio recording and processing
-- Automatic speech-to-text transcription
-- AI-powered meeting summarization
-- Local storage for audio files and transcripts
-- GUI interface for easy interaction
+- 🎙️ **Live transcription** - Real-time audio-to-text conversion
+- ⚡ **Fast & efficient** - Uses faster-whisper (4x faster than openai-whisper)
+- 🎯 **Voice Activity Detection** - Only transcribes when speech is detected
+- 🖥️ **Console output** - Simple, clean terminal interface
+- 🔧 **Configurable** - Multiple Whisper model sizes and settings
+- 🍎 **macOS optimized** - Uses BlackHole for audio routing
 
-## Architecture
+## Prerequisites
 
-The project is organized into modular components:
+### System Requirements
+- macOS (tested on macOS 10.15+)
+- Python 3.10 or higher
+- Homebrew (for installing system dependencies)
 
-- `src/audio/` - Audio capture and processing
-- `src/transcription/` - Speech-to-text conversion
-- `src/summarization/` - AI-powered text summarization
-- `src/storage/` - Data persistence layer
-- `src/gui/` - User interface
+### System Dependencies
+
+You need to install two system packages:
+
+```bash
+# Install FFmpeg (audio processing)
+brew install ffmpeg
+
+# Install PortAudio (audio I/O)
+brew install portaudio
+
+# Install BlackHole (virtual audio device)
+brew install blackhole-2ch
+```
+
+### BlackHole Setup
+
+BlackHole creates a virtual audio device that routes audio between applications. After installation, you need to configure it:
+
+#### Option 1: Capture Microphone Audio
+1. Open **System Settings → Sound**
+2. Set **Input** to your microphone
+3. Run the script and select the BlackHole device when prompted
+
+#### Option 2: Capture System Audio (Zoom, YouTube, etc.)
+1. Open **Audio MIDI Setup** (Applications → Utilities)
+2. Click the **+** button → Create **Multi-Output Device**
+3. Check **BlackHole 2ch** and your speakers/headphones
+4. Set this Multi-Output Device as your system output
+5. In the script, select BlackHole as input
+
+For detailed instructions, see [BlackHole documentation](https://github.com/ExistentialAudio/BlackHole).
 
 ## Installation
 
-### Prerequisites
-
-- Python 3.10 or higher
-- pip package manager
-
-### Quick Start with Makefile
-
-```bash
-# 1. Create virtual environment
-make setup
-
-# 2. Activate it
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# 3. Install development dependencies
-make install-dev
-
-# 4. Copy and configure environment variables
-cp .env.example .env
-# Edit .env and add your API keys
-```
-
-### Manual Setup
-
-1. Clone the repository:
+1. **Clone the repository:**
 ```bash
 git clone <repository-url>
 cd meeting-summarizer
 ```
 
-2. Create and activate virtual environment:
+2. **Create and activate virtual environment:**
 ```bash
 python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate
 ```
 
-3. Install dependencies:
+3. **Install Python dependencies:**
 ```bash
-# For development
-python3 -m pip install -r requirements-dev.txt
-
-# Or as editable package
-python3 -m pip install -e ".[dev]"
+pip install -r requirements.txt
 ```
 
-4. Configure environment:
+4. **(Optional) Configure settings:**
 ```bash
 cp .env.example .env
-# Edit .env and add your API keys:
-# OPENAI_API_KEY=your_openai_key_here
-# ANTHROPIC_API_KEY=your_anthropic_key_here
-```
-
-## Development
-
-### Using Makefile Commands
-
-```bash
-make test          # Run all tests
-make coverage      # Run tests with coverage report
-make lint          # Check code quality
-make format        # Auto-format code
-make type-check    # Run type checker
-make clean         # Clean up generated files
-```
-
-### Running Tests Manually
-
-```bash
-# Run all tests
-python3 -m pytest
-
-# Run with coverage
-python3 -m pytest --cov=src --cov-report=html
-
-# Run specific test file
-python3 -m pytest tests/test_storage.py
-```
-
-### Code Quality
-
-```bash
-# Format code with ruff
-python3 -m ruff format .
-
-# Lint code
-python3 -m ruff check .
-
-# Fix auto-fixable issues
-python3 -m ruff check --fix .
-
-# Type checking
-python3 -m mypy src/
-```
-
-### Project Structure
-
-```
-meeting-summarizer/
-├── src/
-│   ├── audio/          # Audio processing
-│   ├── gui/            # User interface
-│   ├── storage/        # Data persistence
-│   ├── summarization/  # AI summarization
-│   └── transcription/  # Speech-to-text
-├── tests/              # Test suite
-├── data/               # Runtime data
-│   ├── audio/          # Audio files
-│   └── transcripts/    # Transcript files
-└── examples/           # Example scripts
-
+# Edit .env to customize model size, device, etc.
 ```
 
 ## Usage
 
-(To be added as the application develops)
+### Basic Usage
+
+Simply run the script:
+
+```bash
+python transcribe_live.py
+```
+
+The script will:
+1. List all available audio devices
+2. Auto-detect and select BlackHole (or let you choose manually)
+3. Load the Whisper model (downloads on first run)
+4. Start transcribing!
+
+### Stop Transcription
+
+Press **Ctrl+C** to stop gracefully.
+
+### Example Session
+
+```
+🎙️  Live Audio Transcription with faster-whisper
+============================================================
+
+🎤 Available Audio Devices:
+------------------------------------------------------------
+  [0] MacBook Pro Microphone
+    Input channels: 1
+    Output channels: 0
+
+➜ [1] BlackHole 2ch
+    Input channels: 2
+    Output channels: 0
+    ⭐ BlackHole device detected!
+
+✅ Auto-selected BlackHole device: [1] BlackHole 2ch
+
+Use this device? (Y/n): y
+
+📥 Loading Whisper model: base
+   Device: cpu
+   Compute type: int8
+✅ Model loaded successfully!
+
+============================================================
+🎤 Recording started! Speak or play audio...
+⏱️  Buffer duration: 30 seconds
+🛑 Press Ctrl+C to stop
+============================================================
+
+🔄 Transcribing...
+💬 Hello, this is a test of the live transcription system.
+
+🔄 Transcribing...
+💬 It's working great so far!
+```
+
+## Configuration
+
+You can customize the transcription behavior by editing `.env` or setting environment variables:
+
+### Model Size
+
+Choose a model based on your accuracy vs. speed requirements:
+
+```bash
+WHISPER_MODEL=base  # Options: tiny, base, small, medium, large-v2, large-v3
+```
+
+| Model | Size | Speed | Accuracy |
+|-------|------|-------|----------|
+| tiny | ~75MB | Fastest | Lowest |
+| base | ~150MB | Fast | Good (default) |
+| small | ~500MB | Moderate | Better |
+| medium | ~1.5GB | Slow | High |
+| large-v2/v3 | ~3GB | Slowest | Best |
+
+### Device & Compute Type
+
+```bash
+DEVICE=cpu          # Options: cpu, cuda (requires NVIDIA GPU)
+COMPUTE_TYPE=int8   # Options: int8, float16, float32
+```
+
+**Recommendations:**
+- CPU: Use `int8` (fastest, lowest memory)
+- GPU (CUDA): Use `float16` (faster than float32)
+
+### Buffer Duration
+
+Adjust the audio chunk size (affects latency vs. accuracy):
+
+```bash
+CHUNK_DURATION=30  # Seconds (default: 30)
+```
+
+- **Smaller values** (10-15s): Lower latency, may cut off speech
+- **Larger values** (30-60s): Better accuracy, higher latency
+
+## Troubleshooting
+
+### "No module named 'pyaudio'" or "No module named 'faster_whisper'"
+
+Make sure you've installed the dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+### "Error loading model"
+
+The model downloads on first run. Check:
+1. Internet connection (models download from Hugging Face)
+2. Disk space (~150MB for base model)
+3. Try a smaller model: `WHISPER_MODEL=tiny` in `.env`
+
+### "No BlackHole device found"
+
+Make sure BlackHole is installed:
+```bash
+brew install blackhole-2ch
+```
+
+Then restart the script and manually select the BlackHole device.
+
+### "Input overflowed" error
+
+This is usually harmless and means the audio buffer got full. The script continues working. If it happens frequently:
+1. Increase buffer size in the code (CHUNK variable)
+2. Close other audio applications
+3. Restart your computer
+
+### Poor transcription quality
+
+1. Use a larger model: `WHISPER_MODEL=medium`
+2. Increase buffer duration: `CHUNK_DURATION=60`
+3. Check audio routing - ensure audio is actually reaching BlackHole
+4. Test with higher volume
+
+### No transcription output
+
+1. Verify audio is reaching BlackHole:
+   - Open **Audio MIDI Setup**
+   - Select BlackHole device
+   - Check the input level meters (should show activity)
+2. Check volume levels (may be too quiet)
+3. Try speaking louder or playing audio at higher volume
+
+## Model Downloads
+
+On first run, the script downloads the Whisper model:
+- **Location**: `~/.cache/huggingface/hub/`
+- **Size**: 75MB (tiny) to 3GB (large)
+- **Time**: 1-5 minutes depending on connection
+
+## Performance Notes
+
+| Setup | Speed | Notes |
+|-------|-------|-------|
+| MacBook Pro (M1/M2/M3) + base | Fast | Recommended |
+| MacBook Pro (Intel) + base | Moderate | Use tiny for faster processing |
+| MacBook Air + tiny | Fast | Good for basic transcription |
+| GPU (CUDA) + medium | Very fast | Best quality |
+
+## Future Enhancements
+
+Potential features (not currently implemented):
+- Save transcripts to file with `--save` flag
+- Speaker diarization (identify who's speaking)
+- Real-time translation
+- Windows/Linux support
+- Web interface for remote transcription
+
+## Development
+
+### Code Quality
+
+```bash
+# Format code
+python -m ruff format .
+
+# Lint code
+python -m ruff check .
+
+# Type checking
+python -m mypy transcribe_live.py
+```
+
+### Using Make Commands
+
+```bash
+make setup          # Create virtual environment
+make install-dev    # Install dev dependencies
+make format         # Format code with ruff
+make lint           # Check code quality
+```
+
+## Technical Details
+
+**Stack:**
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) - Optimized Whisper implementation using CTranslate2
+- [PyAudio](https://people.csail.mit.edu/hubert/pyaudio/) - Audio I/O
+- [BlackHole](https://github.com/ExistentialAudio/BlackHole) - Virtual audio driver for macOS
+
+**Audio Pipeline:**
+```
+Audio Source → BlackHole → PyAudio Stream → 30s Buffer →
+faster-whisper → Console Output
+```
 
 ## License
 

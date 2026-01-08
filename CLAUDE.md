@@ -4,34 +4,59 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Meeting Summarizer is a Python application for processing audio recordings, transcribing them, and generating summaries. The project is designed with a modular architecture separating concerns across multiple domains.
+Live Audio Transcription is a Python application for real-time audio transcription using faster-whisper and BlackHole on macOS. The project focuses on simplicity with a single-script architecture.
 
 ## Architecture
 
-The codebase is organized into five main modules under `src/`:
+This is a **single-script application** with no module structure:
 
-- **audio**: Audio processing, recording, and manipulation functionality
-- **transcription**: Speech-to-text conversion using transcription services
-- **summarization**: AI-powered summarization of transcripts
-- **storage**: Data persistence layer for audio files, transcripts, and summaries
-- **gui**: User interface components
+- **transcribe_live.py** - Main script containing all functionality:
+  - Audio device detection and selection
+  - Audio stream capture using PyAudio
+  - Real-time transcription using faster-whisper
+  - Console output formatting
+  - Graceful shutdown handling
+
+### Key Components
+
+The script is organized into these main functions:
+
+1. **list_audio_devices()** - Enumerate and display available audio input devices
+2. **select_input_device()** - Auto-detect BlackHole or prompt user selection
+3. **load_whisper_model()** - Initialize faster-whisper with configuration
+4. **transcribe_audio_buffer()** - Process audio chunks and return transcribed text
+5. **main()** - Orchestrate the transcription loop
 
 ### Data Flow
 
-1. Audio files are processed via the `audio` module
-2. The `transcription` module converts audio to text
-3. Transcripts are passed to the `summarization` module for analysis
-4. The `storage` module handles persistence of all artifacts
-5. The `gui` module provides user interaction
+```
+Audio Source (Microphone/System Audio)
+  ↓
+BlackHole Virtual Audio Device
+  ↓
+PyAudio Stream (16kHz, Mono)
+  ↓
+Audio Buffer (30-second chunks)
+  ↓
+faster-whisper Model
+  ↓
+Transcribed Text → Console Output
+```
 
 ### Directory Structure
 
-- `src/` - Source code organized by domain
-- `tests/` - Test suite mirroring the source structure
-- `data/` - Runtime data directory
-  - `data/audio/` - Audio file storage
-  - `data/transcripts/` - Transcript storage
-- `examples/` - Example scripts and usage demonstrations
+```
+meeting-summarizer/
+├── transcribe_live.py      # Main script (~250 lines)
+├── requirements.txt         # Python dependencies
+├── requirements-dev.txt     # Development dependencies
+├── .env.example            # Configuration template
+├── README.md               # User documentation
+├── CLAUDE.md               # This file (developer guidance)
+├── pyproject.toml          # Project metadata
+├── Makefile                # Development commands
+└── venv/                   # Virtual environment (local)
+```
 
 ## Development Commands
 
@@ -39,100 +64,238 @@ The codebase is organized into five main modules under `src/`:
 
 ```bash
 # Create and activate virtual environment
-python -m venv venv
+make setup  # or: python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
+# Install Python dependencies
+pip install -r requirements.txt
+
 # Install development dependencies
-pip install -r requirements-dev.txt
+make install-dev  # or: pip install -r requirements-dev.txt
 
-# Or install as editable package with dev dependencies
-pip install -e ".[dev]"
-
-# Copy environment template and add your API keys
+# Copy environment template (optional)
 cp .env.example .env
-# Edit .env and add your OPENAI_API_KEY and ANTHROPIC_API_KEY
+# Edit .env to customize Whisper model, device, etc.
 ```
 
-### Testing
+### System Dependencies
+
+**Required before running:**
+```bash
+# macOS
+brew install ffmpeg portaudio blackhole-2ch
+```
+
+### Running the Application
 
 ```bash
-# Run all tests
-pytest
+# Activate virtual environment
+source venv/bin/activate
 
-# Run specific test file
-pytest tests/test_storage.py
+# Run the script
+python transcribe_live.py
 
-# Run tests with coverage report
-pytest --cov=src --cov-report=html
-
-# Run tests and generate coverage in terminal
-pytest --cov=src --cov-report=term-missing
-
-# Run specific test by name
-pytest tests/test_storage.py::test_save_audio -v
+# With custom model size
+WHISPER_MODEL=small python transcribe_live.py
 ```
 
 ### Code Quality
 
 ```bash
 # Format code with ruff
-ruff format .
+make format  # or: python3 -m ruff format .
 
 # Lint and auto-fix issues
-ruff check --fix .
+python3 -m ruff check --fix .
 
 # Lint without fixing
-ruff check .
+make lint  # or: python3 -m ruff check .
 
 # Type checking with mypy
-mypy src/
-
-# Format with black (alternative)
-black src/ tests/
-```
-
-### Running Individual Modules
-
-```bash
-# Import and use modules in Python
-python -c "from src.storage.manager import StorageManager; print(StorageManager)"
+make type-check  # or: python3 -m mypy transcribe_live.py
 ```
 
 ## Implementation Guidelines
 
-### Module Boundaries
+### Code Style
 
-Each module under `src/` should maintain clear boundaries:
-- The `storage` module is the only module that directly interacts with the filesystem for data persistence
-- The `transcription` and `summarization` modules should be agnostic to storage implementation
-- The `gui` module orchestrates calls to other modules but contains no business logic
+This is a single-script application, so keep it focused and maintainable:
+
+- **Keep functions small** - Each function should do one thing well
+- **Use clear names** - Function and variable names should be self-documenting
+- **Add docstrings** - Brief docstrings for each function explaining purpose
+- **Handle errors gracefully** - User-friendly error messages with troubleshooting hints
+- **Console output matters** - Use emojis and formatting for clear UX
+
+### Extending the Script
+
+When adding features, consider:
+
+1. **Adding command-line arguments** - Use `argparse` for flags like `--save`, `--model`, `--device`
+2. **Adding new output formats** - Keep console output, add optional file saving
+3. **Improving audio processing** - VAD tuning, better buffering strategies
+4. **Cross-platform support** - Abstract audio device selection for Windows/Linux
+
+**Do NOT**:
+- Create separate modules unless absolutely necessary
+- Add complex abstractions for a simple script
+- Over-engineer with classes when functions suffice
 
 ### External Dependencies
 
-Current dependencies (see pyproject.toml and requirements.txt):
-- **anthropic** - Claude API client for AI summarization
-- **openai** - OpenAI API client for Whisper transcription
-- **pydub** - Audio file manipulation and format conversion
-- **python-dotenv** - Environment variable management
+**Core dependencies** (requirements.txt):
+- **faster-whisper** - Optimized Whisper implementation using CTranslate2
+- **pyaudio** - Audio I/O for capturing audio streams
+- **python-dotenv** - Environment variable management (.env file)
+- **numpy** - Audio data manipulation
 
-Development dependencies:
-- **pytest** - Testing framework
-- **pytest-cov** - Coverage reporting
-- **ruff** - Fast Python linter and formatter (replaces black, flake8, isort)
+**Development dependencies** (requirements-dev.txt):
+- **ruff** - Fast Python linter and formatter
 - **mypy** - Static type checking
-- **black** - Code formatter (backup option)
 
-### Design Patterns
+**System dependencies** (must be installed separately):
+- **ffmpeg** - Audio/video format conversion (required by faster-whisper)
+  - macOS: `brew install ffmpeg`
+  - Linux: `apt-get install ffmpeg`
+- **portaudio** - Audio I/O library (required by pyaudio)
+  - macOS: `brew install portaudio`
+  - Linux: `apt-get install portaudio19-dev`
+- **BlackHole** - Virtual audio driver for macOS
+  - macOS: `brew install blackhole-2ch`
 
-- **Protocol-based dependency injection**: Services use Protocol types for providers, enabling easy mocking and implementation swapping
-- **Service layer pattern**: Business logic separated into service classes (TranscriptionService, SummarizationService)
-- **Repository pattern**: StorageManager handles all data persistence
-- **Clear module boundaries**: Each module has a single responsibility and minimal coupling
+### Configuration
+
+The script uses environment variables for configuration:
+
+- **WHISPER_MODEL** - Model size (tiny, base, small, medium, large-v2, large-v3)
+- **DEVICE** - Compute device (cpu, cuda)
+- **COMPUTE_TYPE** - Quantization type (int8, float16, float32)
+- **CHUNK_DURATION** - Audio buffer size in seconds
+
+Configuration is loaded via:
+1. `.env` file (if present)
+2. System environment variables
+3. Defaults (base model, cpu, int8, 30 seconds)
 
 ### Type Hints
 
-All code uses Python type hints. When adding new code:
-- Use `from typing import Protocol` for interfaces
-- Use `Path` from pathlib instead of strings for file paths
+All code uses Python type hints:
 - Use `-> None` for functions with no return value
-- Enable strict mypy checking (already configured in pyproject.toml)
+- Use `Optional[T]` for nullable types
+- Use `List[T]`, `Dict[K, V]` for collections
+- Enable strict mypy checking (configured in pyproject.toml)
+
+### Error Handling
+
+The script handles several error scenarios:
+
+1. **Missing dependencies** - Clear install instructions
+2. **Model download failures** - Check internet, suggest smaller models
+3. **Audio device not found** - List available devices, suggest BlackHole install
+4. **Audio buffer overflow** - Graceful degradation with warning
+5. **Transcription errors** - Continue running, log error
+
+All errors should:
+- Print clear error messages with emoji indicators (❌, ⚠️)
+- Provide actionable troubleshooting steps
+- Exit cleanly or continue gracefully
+
+### Performance Considerations
+
+**Model Selection**:
+- Default to `base` model (good balance of speed/accuracy)
+- Recommend `tiny` for older hardware
+- Suggest `medium` or `large` for high accuracy needs
+
+**Audio Buffering**:
+- 30-second chunks balance latency vs. accuracy
+- Smaller chunks (10-15s) = lower latency, may cut off sentences
+- Larger chunks (60s+) = better context, higher latency
+
+**Voice Activity Detection (VAD)**:
+- Enabled by default in faster-whisper
+- Skips transcription of silence
+- Improves performance and reduces unnecessary output
+
+## Future Enhancement Ideas
+
+Potential features to add (not currently implemented):
+
+### Easy Additions:
+- **Save to file** - Add `--save` flag to write transcripts with timestamps
+- **Custom device selection** - Add `--device-id` flag to skip interactive selection
+- **Model preloading** - Add `--preload` to load model before starting recording
+
+### Medium Complexity:
+- **Speaker diarization** - Integrate pyannote.audio to identify speakers
+- **Real-time streaming** - Reduce buffer size, use streaming API
+- **Multiple languages** - Language detection and selection
+
+### Advanced:
+- **Web interface** - Flask/FastAPI server with WebSocket for remote access
+- **Translation** - Real-time translation of transcribed text
+- **Windows/Linux support** - Abstract audio routing for other platforms
+
+## Testing Strategy
+
+Currently: **Manual testing only**
+
+To test the script:
+1. Run with various model sizes (tiny, base, small)
+2. Test with microphone input (via BlackHole)
+3. Test with system audio (Zoom, YouTube, etc.)
+4. Test graceful shutdown (Ctrl+C)
+5. Test error scenarios (missing dependencies, wrong device)
+
+If adding automated tests:
+- Use `pytest` (already in dev dependencies)
+- Mock PyAudio for unit tests
+- Test model loading, device selection, buffer handling
+- Integration tests require real audio (may need fixtures)
+
+## Troubleshooting Common Issues
+
+### Development Issues
+
+**Import errors after modifying script**:
+- Restart Python interpreter
+- Check for syntax errors with `python3 -m py_compile transcribe_live.py`
+
+**Type checking fails**:
+- Check pyproject.toml mypy configuration
+- Verify type hints are correct
+- Use `# type: ignore` sparingly for third-party library issues
+
+**Linting errors**:
+- Run `ruff format .` to auto-fix formatting
+- Run `ruff check --fix .` to fix auto-fixable issues
+- Review remaining issues manually
+
+### Runtime Issues
+
+**"No module named 'pyaudio'"**:
+- Activate virtual environment: `source venv/bin/activate`
+- Install dependencies: `pip install -r requirements.txt`
+
+**"Model download fails"**:
+- Check internet connection
+- Check disk space (~150MB for base model)
+- Models cache to `~/.cache/huggingface/hub/`
+
+**"No BlackHole device found"**:
+- Install BlackHole: `brew install blackhole-2ch`
+- Restart script and manually select device
+
+## Git Workflow
+
+Since this is a simple single-script project:
+
+1. Make changes to `transcribe_live.py`
+2. Test manually
+3. Format: `make format`
+4. Lint: `make lint`
+5. Type check: `make type-check`
+6. Commit with clear message
+7. Push to remote
+
+Keep commits atomic and focused on single features or fixes.

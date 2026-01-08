@@ -60,6 +60,9 @@ data/audio/*.m4a
 data/transcripts/*.json
 data/transcripts/*.txt
 
+# Transcript output directory
+transcripts/
+
 # Logs
 *.log
 logs/
