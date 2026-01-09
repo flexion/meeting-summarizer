@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Transcription</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        html, body {
+            height: 100%;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Tab Navigation */
+        .tab-nav {
+            display: flex;
+            background: #0f0f1a;
+            border-bottom: 1px solid #2a2a4a;
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 16px 24px;
+            background: transparent;
+            border: none;
+            color: #888;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+        .tab-btn:hover {
+            color: #ccc;
+            background: rgba(255,255,255,0.03);
+        }
+        .tab-btn.active {
+            color: #4ecca3;
+        }
+        .tab-btn.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #4ecca3;
+        }
+        .tab-btn .badge {
+            display: inline-block;
+            background: #e94560;
+            color: #fff;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: 8px;
+        }
+
+        /* Tab Content */
+        .tab-content {
+            flex: 1;
+            display: none;
+            overflow: hidden;
+        }
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ===== RECORD TAB ===== */
+        .record-tab {
+            padding: 20px;
+            max-width: 900px;
+            margin: 0 auto;
+            width: 100%;
+            overflow-y: auto;
+        }
+        .controls {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .control-row {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        select {
+            flex: 1;
+            min-width: 200px;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        select:focus {
+            outline: 2px solid #4ecca3;
+        }
+        button {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-start {
+            background: #4ecca3;
+            color: #1a1a2e;
+        }
+        .btn-start:hover {
+            background: #3db892;
+        }
+        .btn-stop {
+            background: #e94560;
+            color: #fff;
+        }
+        .btn-stop:hover {
+            background: #d63850;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .level-meter {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .level-label {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 8px;
+        }
+        .level-bar-container {
+            background: #0f3460;
+            border-radius: 4px;
+            height: 24px;
+            overflow: hidden;
+        }
+        .level-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4ecca3, #e94560);
+            width: 0%;
+            transition: width 0.1s ease-out;
+            border-radius: 4px;
+        }
+        .status {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 10px;
+            font-size: 12px;
+            color: #888;
+        }
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #666;
+        }
+        .status-dot.recording {
+            background: #e94560;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .transcript-container {
+            background: #16213e;
+            border-radius: 10px;
+            flex: 1;
+            min-height: 300px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .transcript-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid #0f3460;
+            font-size: 14px;
+            color: #888;
+        }
+        .transcript {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            font-size: 15px;
+            line-height: 1.8;
+        }
+        .transcript-segment {
+            margin-bottom: 15px;
+            padding-left: 90px;
+            position: relative;
+        }
+        .transcript-timestamp {
+            position: absolute;
+            left: 0;
+            color: #4ecca3;
+            font-family: monospace;
+            font-size: 13px;
+        }
+        .transcript-text {
+            color: #ddd;
+        }
+        .empty-state {
+            color: #666;
+            text-align: center;
+            padding-top: 50px;
+        }
+
+        /* ===== CHAT TAB ===== */
+        .chat-tab {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        .chat-sidebar {
+            background: #0f0f1a;
+            padding: 16px 20px;
+            border-bottom: 1px solid #2a2a4a;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .chat-sidebar select {
+            min-width: 250px;
+            padding: 10px 12px;
+            font-size: 13px;
+        }
+        .btn-sm {
+            padding: 10px 16px;
+            font-size: 13px;
+        }
+        .btn-load {
+            background: #4ecca3;
+            color: #1a1a2e;
+        }
+        .btn-load:hover {
+            background: #3db892;
+        }
+        .btn-secondary {
+            background: transparent;
+            color: #888;
+            border: 1px solid #444;
+        }
+        .btn-secondary:hover {
+            color: #fff;
+            border-color: #666;
+        }
+        .loaded-badge {
+            font-size: 12px;
+            color: #4ecca3;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: rgba(78, 204, 163, 0.1);
+            border-radius: 20px;
+        }
+        .loaded-badge::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            background: #4ecca3;
+            border-radius: 50%;
+        }
+
+        .chat-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 30px 20px;
+        }
+        .chat-messages-inner {
+            max-width: 800px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+        .chat-message {
+            display: flex;
+            gap: 16px;
+            line-height: 1.6;
+        }
+        .chat-message .avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        .chat-message.user .avatar {
+            background: #4ecca3;
+            color: #1a1a2e;
+        }
+        .chat-message.assistant .avatar {
+            background: #e94560;
+            color: #fff;
+        }
+        .chat-message .content {
+            flex: 1;
+            padding-top: 6px;
+        }
+        .chat-message.user .content {
+            color: #eee;
+        }
+        .chat-message.assistant .content {
+            color: #ccc;
+        }
+        /* Markdown styling for assistant messages */
+        .chat-message.assistant .content h1 {
+            font-size: 1.4em;
+            font-weight: 600;
+            margin: 16px 0 8px 0;
+            color: #fff;
+        }
+        .chat-message.assistant .content h2 {
+            font-size: 1.2em;
+            font-weight: 600;
+            margin: 14px 0 6px 0;
+            color: #fff;
+        }
+        .chat-message.assistant .content h3 {
+            font-size: 1.1em;
+            font-weight: 600;
+            margin: 12px 0 4px 0;
+            color: #eee;
+        }
+        .chat-message.assistant .content p {
+            margin: 8px 0;
+        }
+        .chat-message.assistant .content ul,
+        .chat-message.assistant .content ol {
+            margin: 8px 0;
+            padding-left: 24px;
+        }
+        .chat-message.assistant .content li {
+            margin: 4px 0;
+        }
+        .chat-message.assistant .content strong {
+            color: #fff;
+            font-weight: 600;
+        }
+        .chat-message.assistant .content code {
+            background: #0f3460;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        .chat-message.assistant .content pre {
+            background: #0f3460;
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+        .chat-message.assistant .content pre code {
+            background: none;
+            padding: 0;
+        }
+        .chat-message.assistant .content blockquote {
+            border-left: 3px solid #4ecca3;
+            padding-left: 12px;
+            margin: 8px 0;
+            color: #aaa;
+        }
+        .chat-message.assistant .content hr {
+            border: none;
+            border-top: 1px solid #2a2a4a;
+            margin: 16px 0;
+        }
+        .chat-message.assistant .content > *:first-child {
+            margin-top: 0;
+        }
+        .chat-message.loading .content {
+            color: #888;
+            font-style: italic;
+        }
+        .chat-message.error .content {
+            color: #e94560;
+        }
+        .chat-empty {
+            text-align: center;
+            color: #666;
+            padding: 60px 20px;
+        }
+        .chat-empty h2 {
+            font-size: 20px;
+            font-weight: 500;
+            margin-bottom: 12px;
+            color: #888;
+        }
+        .chat-empty p {
+            font-size: 14px;
+        }
+
+        .chat-input-area {
+            padding: 20px;
+            background: linear-gradient(to top, #1a1a2e 80%, transparent);
+        }
+        .chat-input-container {
+            max-width: 800px;
+            margin: 0 auto;
+            display: flex;
+            gap: 12px;
+            background: #16213e;
+            border-radius: 12px;
+            padding: 12px 16px;
+            border: 1px solid #2a2a4a;
+        }
+        .chat-input-container:focus-within {
+            border-color: #4ecca3;
+        }
+        .chat-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #fff;
+            font-size: 15px;
+            outline: none;
+            resize: none;
+        }
+        .chat-input::placeholder {
+            color: #666;
+        }
+        .btn-send {
+            background: #4ecca3;
+            color: #1a1a2e;
+            padding: 10px 20px;
+            border-radius: 8px;
+        }
+        .btn-send:hover {
+            background: #3db892;
+        }
+        .btn-send:disabled {
+            background: #333;
+            color: #666;
+        }
+
+        /* Error Toast */
+        .error-toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #e94560;
+            color: #fff;
+            padding: 15px 20px;
+            border-radius: 6px;
+            display: none;
+            max-width: 300px;
+            z-index: 1000;
+        }
+        .error-toast.show {
+            display: block;
+            animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <!-- Tab Navigation -->
+    <nav class="tab-nav">
+        <button class="tab-btn active" data-tab="record">Record</button>
+        <button class="tab-btn" data-tab="chat">Chat</button>
+    </nav>
+
+    <!-- Record Tab -->
+    <div id="record-tab" class="tab-content active">
+        <div class="record-tab">
+            <div class="controls">
+                <div class="control-row">
+                    <select id="device-select">
+                        <option value="">Loading devices...</option>
+                    </select>
+                    <button id="control-btn" class="btn-start" disabled>Start</button>
+                </div>
+            </div>
+
+            <div class="level-meter">
+                <div class="level-label">Audio Level</div>
+                <div class="level-bar-container">
+                    <div id="level-bar" class="level-bar"></div>
+                </div>
+                <div class="status">
+                    <div class="status-indicator">
+                        <div id="status-dot" class="status-dot"></div>
+                        <span id="status-text">Ready</span>
+                    </div>
+                    <span id="elapsed-time"></span>
+                </div>
+            </div>
+
+            <div class="transcript-container">
+                <div class="transcript-header">Live Transcript</div>
+                <div id="transcript" class="transcript">
+                    <div class="empty-state">Select an audio device and click Start to begin transcription</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chat Tab -->
+    <div id="chat-tab" class="tab-content">
+        <div class="chat-tab">
+            <div class="chat-sidebar">
+                <select id="transcript-select">
+                    <option value="">Select a transcript...</option>
+                </select>
+                <button id="load-btn" class="btn-sm btn-load" disabled>Load</button>
+                <button id="unload-btn" class="btn-sm btn-secondary" style="display: none;">Unload</button>
+                <button id="clear-chat-btn" class="btn-sm btn-secondary">Clear Chat</button>
+                <span id="loaded-indicator" class="loaded-badge" style="display: none;"></span>
+            </div>
+
+            <div class="chat-main">
+                <div id="chat-messages" class="chat-messages">
+                    <div class="chat-empty">
+                        <h2>Chat with your transcripts</h2>
+                        <p>Select a transcript above or start recording to ask questions about your meetings.</p>
+                    </div>
+                </div>
+
+                <div class="chat-input-area">
+                    <div class="chat-input-container">
+                        <input type="text" id="chat-input" class="chat-input" placeholder="Ask a question about the meeting..." />
+                        <button id="send-btn" class="btn-send">Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="error-toast" class="error-toast"></div>
+
+    <script>
+        // Elements
+        const tabBtns = document.querySelectorAll('.tab-btn');
+        const tabContents = document.querySelectorAll('.tab-content');
+        const deviceSelect = document.getElementById('device-select');
+        const controlBtn = document.getElementById('control-btn');
+        const levelBar = document.getElementById('level-bar');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const elapsedTime = document.getElementById('elapsed-time');
+        const transcript = document.getElementById('transcript');
+        const errorToast = document.getElementById('error-toast');
+        const chatMessages = document.getElementById('chat-messages');
+        const chatInput = document.getElementById('chat-input');
+        const sendBtn = document.getElementById('send-btn');
+        const clearChatBtn = document.getElementById('clear-chat-btn');
+        const transcriptSelect = document.getElementById('transcript-select');
+        const loadBtn = document.getElementById('load-btn');
+        const unloadBtn = document.getElementById('unload-btn');
+        const loadedIndicator = document.getElementById('loaded-indicator');
+
+        let ws = null;
+        let isRunning = false;
+        let reconnectTimer = null;
+        let hasTranscript = false;
+        let isSending = false;
+        let loadedFile = null;
+
+        // Tab switching
+        tabBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tabId = btn.dataset.tab;
+                tabBtns.forEach(b => b.classList.remove('active'));
+                tabContents.forEach(c => c.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(`${tabId}-tab`).classList.add('active');
+            });
+        });
+
+        // Fetch audio devices
+        async function fetchDevices() {
+            try {
+                const response = await fetch('/api/devices');
+                const devices = await response.json();
+
+                deviceSelect.innerHTML = '';
+
+                if (devices.length === 0) {
+                    deviceSelect.innerHTML = '<option value="">No input devices found</option>';
+                    return;
+                }
+
+                deviceSelect.innerHTML = '<option value="">Select audio device...</option>';
+
+                devices.sort((a, b) => b.is_blackhole - a.is_blackhole);
+
+                devices.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.index;
+                    let label = device.name;
+                    if (device.is_blackhole) {
+                        label += ' (Recommended)';
+                    } else if (device.is_aggregate) {
+                        label += ' (Aggregate)';
+                    }
+                    if (!device.has_input) {
+                        label += ' [No Input]';
+                    }
+                    option.textContent = label;
+                    deviceSelect.appendChild(option);
+                });
+
+                const blackhole = devices.find(d => d.is_blackhole);
+                if (blackhole) {
+                    deviceSelect.value = blackhole.index;
+                }
+
+                updateControlButton();
+            } catch (error) {
+                showError('Failed to load audio devices');
+            }
+        }
+
+        function updateControlButton() {
+            if (isRunning) {
+                controlBtn.textContent = 'Stop';
+                controlBtn.className = 'btn-stop';
+                controlBtn.disabled = false;
+                deviceSelect.disabled = true;
+            } else {
+                controlBtn.textContent = 'Start';
+                controlBtn.className = 'btn-start';
+                controlBtn.disabled = !deviceSelect.value;
+                deviceSelect.disabled = false;
+            }
+        }
+
+        async function startTranscription() {
+            const deviceId = parseInt(deviceSelect.value);
+
+            try {
+                const response = await fetch('/api/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_id: deviceId })
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    showError(data.error || 'Failed to start');
+                    return;
+                }
+
+                isRunning = true;
+                updateControlButton();
+                clearTranscript();
+
+            } catch (error) {
+                showError('Failed to start transcription');
+            }
+        }
+
+        async function stopTranscription() {
+            try {
+                await fetch('/api/stop', { method: 'POST' });
+                isRunning = false;
+                updateControlButton();
+                levelBar.style.width = '0%';
+            } catch (error) {
+                showError('Failed to stop transcription');
+            }
+        }
+
+        function clearTranscript() {
+            transcript.innerHTML = '';
+        }
+
+        function addTranscriptSegment(timestamp, text) {
+            const emptyState = transcript.querySelector('.empty-state');
+            if (emptyState) emptyState.remove();
+
+            hasTranscript = true;
+
+            const segment = document.createElement('div');
+            segment.className = 'transcript-segment';
+            segment.innerHTML = `
+                <span class="transcript-timestamp">${timestamp}</span>
+                <span class="transcript-text">${escapeHtml(text)}</span>
+            `;
+            transcript.appendChild(segment);
+            transcript.scrollTop = transcript.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function updateLevel(value) {
+            const percentage = Math.min((value / 8000) * 100, 100);
+            levelBar.style.width = `${percentage}%`;
+        }
+
+        function updateStatus(status) {
+            isRunning = status.running;
+            hasTranscript = status.has_transcript || false;
+            loadedFile = status.loaded_file || null;
+            updateControlButton();
+            updateTranscriptSelector();
+
+            // Update recording badge on tab
+            const recordTab = document.querySelector('[data-tab="record"]');
+            const existingBadge = recordTab.querySelector('.badge');
+            if (existingBadge) existingBadge.remove();
+            if (status.running) {
+                const badge = document.createElement('span');
+                badge.className = 'badge';
+                badge.textContent = 'LIVE';
+                recordTab.appendChild(badge);
+            }
+
+            if (status.running) {
+                statusDot.classList.add('recording');
+                statusText.textContent = `Recording from ${status.device}`;
+                updateElapsedTime(status.elapsed_seconds);
+            } else {
+                statusDot.classList.remove('recording');
+                statusText.textContent = 'Ready';
+                elapsedTime.textContent = '';
+                levelBar.style.width = '0%';
+            }
+        }
+
+        function updateTranscriptSelector() {
+            if (loadedFile) {
+                loadedIndicator.textContent = loadedFile;
+                loadedIndicator.style.display = 'flex';
+                unloadBtn.style.display = 'inline-block';
+                transcriptSelect.disabled = true;
+                loadBtn.disabled = true;
+            } else if (isRunning) {
+                loadedIndicator.textContent = 'Live recording';
+                loadedIndicator.style.display = 'flex';
+                unloadBtn.style.display = 'none';
+                transcriptSelect.disabled = true;
+                loadBtn.disabled = true;
+            } else {
+                loadedIndicator.style.display = 'none';
+                unloadBtn.style.display = 'none';
+                transcriptSelect.disabled = false;
+                loadBtn.disabled = !transcriptSelect.value;
+            }
+        }
+
+        function updateElapsedTime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+
+            if (hours > 0) {
+                elapsedTime.textContent = `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            } else {
+                elapsedTime.textContent = `${minutes}:${String(secs).padStart(2, '0')}`;
+            }
+        }
+
+        function showError(message) {
+            errorToast.textContent = message;
+            errorToast.classList.add('show');
+            setTimeout(() => errorToast.classList.remove('show'), 5000);
+        }
+
+        // WebSocket
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                switch (data.type) {
+                    case 'level':
+                        updateLevel(data.value);
+                        break;
+                    case 'transcript':
+                        addTranscriptSegment(data.timestamp, data.text);
+                        break;
+                    case 'status':
+                        updateStatus(data);
+                        break;
+                    case 'pong':
+                        break;
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                reconnectTimer = setTimeout(connectWebSocket, 2000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('ping');
+            }
+        }, 30000);
+
+        // Event listeners
+        deviceSelect.addEventListener('change', updateControlButton);
+
+        controlBtn.addEventListener('click', () => {
+            if (isRunning) {
+                stopTranscription();
+            } else {
+                startTranscription();
+            }
+        });
+
+        // Chat functions
+        function addChatMessage(content, type) {
+            const emptyState = chatMessages.querySelector('.chat-empty');
+            if (emptyState) emptyState.remove();
+
+            let inner = chatMessages.querySelector('.chat-messages-inner');
+            if (!inner) {
+                inner = document.createElement('div');
+                inner.className = 'chat-messages-inner';
+                chatMessages.appendChild(inner);
+            }
+
+            const message = document.createElement('div');
+            message.className = `chat-message ${type}`;
+
+            const avatar = document.createElement('div');
+            avatar.className = 'avatar';
+            avatar.textContent = type === 'user' ? 'You' : 'AI';
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'content';
+
+            // Render markdown for assistant messages, plain text for others
+            if (type === 'assistant') {
+                contentDiv.innerHTML = marked.parse(content);
+            } else {
+                contentDiv.textContent = content;
+            }
+
+            message.appendChild(avatar);
+            message.appendChild(contentDiv);
+            inner.appendChild(message);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            return message;
+        }
+
+        async function sendChatMessage() {
+            const message = chatInput.value.trim();
+            if (!message || isSending) return;
+
+            if (!hasTranscript) {
+                showError('No transcript available. Load a transcript or start recording first.');
+                return;
+            }
+
+            isSending = true;
+            sendBtn.disabled = true;
+            chatInput.disabled = true;
+
+            addChatMessage(message, 'user');
+            chatInput.value = '';
+
+            const loadingMsg = addChatMessage('Thinking...', 'loading');
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message })
+                });
+
+                loadingMsg.remove();
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    addChatMessage(data.error || 'Failed to get response', 'error');
+                    return;
+                }
+
+                const data = await response.json();
+                addChatMessage(data.response, 'assistant');
+
+            } catch (error) {
+                loadingMsg.remove();
+                addChatMessage('Failed to connect to server', 'error');
+            } finally {
+                isSending = false;
+                sendBtn.disabled = false;
+                chatInput.disabled = false;
+                chatInput.focus();
+            }
+        }
+
+        async function clearChat() {
+            try {
+                await fetch('/api/chat/clear', { method: 'POST' });
+                chatMessages.innerHTML = `
+                    <div class="chat-empty">
+                        <h2>Chat with your transcripts</h2>
+                        <p>Select a transcript above or start recording to ask questions about your meetings.</p>
+                    </div>
+                `;
+            } catch (error) {
+                showError('Failed to clear chat');
+            }
+        }
+
+        sendBtn.addEventListener('click', sendChatMessage);
+
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendChatMessage();
+            }
+        });
+
+        clearChatBtn.addEventListener('click', clearChat);
+
+        // Transcript loading
+        async function fetchTranscripts() {
+            try {
+                const response = await fetch('/api/transcripts');
+                const transcripts = await response.json();
+
+                transcriptSelect.innerHTML = '<option value="">Select a transcript...</option>';
+
+                if (transcripts.length === 0) {
+                    transcriptSelect.innerHTML = '<option value="">No transcripts found</option>';
+                    return;
+                }
+
+                transcripts.forEach(t => {
+                    const option = document.createElement('option');
+                    option.value = t.filename;
+                    const sizeKB = Math.round(t.size / 1024);
+                    option.textContent = `${t.date} (${sizeKB} KB)`;
+                    transcriptSelect.appendChild(option);
+                });
+
+                updateTranscriptSelector();
+            } catch (error) {
+                showError('Failed to load transcript list');
+            }
+        }
+
+        async function loadTranscript() {
+            const filename = transcriptSelect.value;
+            if (!filename) return;
+
+            loadBtn.disabled = true;
+            loadBtn.textContent = 'Loading...';
+
+            try {
+                const response = await fetch('/api/transcripts/load', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename })
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    showError(data.error || 'Failed to load transcript');
+                    return;
+                }
+
+                const data = await response.json();
+                chatMessages.innerHTML = `
+                    <div class="chat-empty">
+                        <h2>Transcript loaded</h2>
+                        <p>${data.segments} segments ready. Ask a question about this meeting!</p>
+                    </div>
+                `;
+
+            } catch (error) {
+                showError('Failed to load transcript');
+            } finally {
+                loadBtn.textContent = 'Load';
+                updateTranscriptSelector();
+            }
+        }
+
+        async function unloadTranscript() {
+            try {
+                await fetch('/api/transcripts/unload', { method: 'POST' });
+                chatMessages.innerHTML = `
+                    <div class="chat-empty">
+                        <h2>Chat with your transcripts</h2>
+                        <p>Select a transcript above or start recording to ask questions about your meetings.</p>
+                    </div>
+                `;
+                transcriptSelect.value = '';
+            } catch (error) {
+                showError('Failed to unload transcript');
+            }
+        }
+
+        transcriptSelect.addEventListener('change', () => {
+            loadBtn.disabled = !transcriptSelect.value;
+        });
+
+        loadBtn.addEventListener('click', loadTranscript);
+        unloadBtn.addEventListener('click', unloadTranscript);
+
+        // Initialize
+        fetchDevices();
+        fetchTranscripts();
+        connectWebSocket();
+    </script>
+</body>
+</html>

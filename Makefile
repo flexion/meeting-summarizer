@@ -1,4 +1,4 @@
-.PHONY: help setup install install-dev check-system-deps run lint format type-check clean
+.PHONY: help setup install install-dev check-system-deps run run-web lint format type-check clean
 
 help:
 	@echo "Live Audio Transcription - Development Commands"
@@ -7,7 +7,8 @@ help:
 	@echo "make install           - Install production dependencies"
 	@echo "make install-dev       - Install development dependencies"
 	@echo "make check-system-deps - Check for required system dependencies"
-	@echo "make run               - Run the transcription script"
+	@echo "make run               - Run the transcription script (CLI)"
+	@echo "make run-web           - Run the web UI server"
 	@echo "make lint              - Run linter"
 	@echo "make format            - Format code"
 	@echo "make type-check        - Run type checker"
@@ -50,6 +51,9 @@ check-system-deps:
 
 run:
 	python3 transcribe_live.py
+
+run-web:
+	python3 -m uvicorn web_app:app --reload --host 127.0.0.1 --port 8000
 
 lint:
 	python3 -m ruff check .

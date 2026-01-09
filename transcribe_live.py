@@ -31,7 +31,7 @@ OUTPUT_DIR = os.getenv("OUTPUT_DIR", "transcripts")
 
 # AWS Bedrock Configuration
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
-BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-5-20250929-v1:0")
 
 # Audio settings
 RATE = 16000  # Sample rate in Hz (Whisper uses 16kHz)
