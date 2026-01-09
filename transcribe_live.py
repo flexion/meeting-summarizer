@@ -6,11 +6,14 @@ This script captures audio from a BlackHole device and transcribes it in real-ti
 using the faster-whisper library. Press Ctrl+C to stop.
 """
 
+import argparse
+import json
 import os
 import signal
 import sys
 from datetime import datetime
 
+import boto3
 import numpy as np
 import pyaudio
 from dotenv import load_dotenv
@@ -23,8 +26,12 @@ load_dotenv()
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 DEVICE = os.getenv("DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("COMPUTE_TYPE", "int8")
-CHUNK_DURATION = int(os.getenv("CHUNK_DURATION", "30"))
+CHUNK_DURATION = int(os.getenv("CHUNK_DURATION", "60"))
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "transcripts")
+
+# AWS Bedrock Configuration
+AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
 
 # Audio settings
 RATE = 16000  # Sample rate in Hz (Whisper uses 16kHz)
@@ -69,6 +76,48 @@ def format_duration(start_time, end_time):
     if hours > 0:
         return f"{hours}:{minutes:02d}:{seconds:02d}"
     return f"{minutes}:{seconds:02d}"
+
+
+def summarize_transcript(transcript_text: str) -> str | None:
+    """Summarize transcript using AWS Bedrock."""
+    if not transcript_text.strip():
+        return None
+
+    try:
+        bedrock = boto3.client("bedrock-runtime", region_name=AWS_REGION)
+
+        prompt = (
+            """Please summarize this meeting transcript. Provide:
+
+1. **Key Points** - Main topics and decisions discussed (bullet points)
+2. **Action Items** - Any tasks, follow-ups, or commitments mentioned (bullet points with owner if mentioned)
+
+Keep it concise and actionable.
+
+Transcript:
+"""
+            + transcript_text
+        )
+
+        response = bedrock.invoke_model(
+            modelId=BEDROCK_MODEL_ID,
+            body=json.dumps(
+                {
+                    "anthropic_version": "bedrock-2023-05-31",
+                    "max_tokens": 1024,
+                    "messages": [{"role": "user", "content": prompt}],
+                }
+            ),
+        )
+
+        result = json.loads(response["body"].read())
+        return result["content"][0]["text"]
+
+    except Exception as e:
+        print(f"\n⚠️  Summarization error: {e}")
+        print("   Transcript saved but summary generation failed.")
+        print("   Check AWS credentials and Bedrock access.")
+        return None
 
 
 def list_audio_devices():
@@ -238,6 +287,7 @@ def main():
         chunk_count = 0
         level_display_interval = int(RATE / CHUNK * 0.5)  # Update level every 0.5 seconds
         level_counter = 0
+        transcript_segments = []  # Track all transcribed text for summarization
 
         while running:
             try:
@@ -282,6 +332,8 @@ def main():
                             # Write to transcript file
                             transcript_file.write(f"{timestamp} {text}\n")
                             transcript_file.flush()
+                            # Track for summarization
+                            transcript_segments.append(text)
                         else:
                             print("   (no speech detected)")
                             print()
@@ -304,11 +356,31 @@ def main():
         stream.close()
         p.terminate()
 
-        # Write transcript footer and close
+        # Write transcript footer
         end_time = datetime.now()
         transcript_file.write("\n---\n")
         transcript_file.write(f"Transcript ended: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         transcript_file.write(f"Duration: {format_duration(start_time, end_time)}\n")
+
+        # Generate summary if we have transcript content
+        if transcript_segments:
+            print("\n🤖 Generating meeting summary...")
+            full_transcript = " ".join(transcript_segments)
+            summary = summarize_transcript(full_transcript)
+
+            if summary:
+                transcript_file.write("\n---\n")
+                transcript_file.write("## Meeting Summary\n\n")
+                transcript_file.write(summary)
+                transcript_file.write("\n")
+
+                print("\n" + "=" * 60)
+                print("📋 Meeting Summary:")
+                print("=" * 60)
+                print(summary)
+        else:
+            print("\n   (No transcript content to summarize)")
+
         transcript_file.close()
 
         print("\n" + "=" * 60)
@@ -322,5 +394,176 @@ def main():
         sys.exit(1)
 
 
+def summarize_existing_file(filepath: str) -> None:
+    """Summarize an existing transcript file."""
+    if not os.path.exists(filepath):
+        print(f"❌ File not found: {filepath}")
+        sys.exit(1)
+
+    print(f"📄 Reading transcript: {filepath}")
+
+    with open(filepath, encoding="utf-8") as f:
+        content = f.read()
+
+    # Extract just the transcript lines (lines starting with timestamps like [00:01:30])
+    lines = content.split("\n")
+    transcript_lines = []
+    for line in lines:
+        # Skip header, footer, and existing summary
+        if line.startswith("[") and "]" in line:
+            # This is a timestamped transcript line
+            transcript_lines.append(line.split("]", 1)[1].strip())
+        elif line.strip() and not any(
+            line.startswith(x)
+            for x in ["Transcript ", "Audio device:", "Model:", "---", "##", "Duration:", "**"]
+        ):
+            # Include other content lines that aren't metadata
+            if not line.startswith("-"):  # Skip existing bullet points
+                transcript_lines.append(line)
+
+    if not transcript_lines:
+        print("❌ No transcript content found in file")
+        sys.exit(1)
+
+    transcript_text = " ".join(transcript_lines)
+    print(f"   Found {len(transcript_lines)} transcript segments")
+
+    print("\n🤖 Generating summary...")
+    summary = summarize_transcript(transcript_text)
+
+    if summary:
+        print("\n" + "=" * 60)
+        print("📋 Meeting Summary:")
+        print("=" * 60)
+        print(summary)
+
+        # Ask if user wants to append to the file
+        print("\n" + "=" * 60)
+        choice = input("💾 Append summary to transcript file? (Y/n): ").strip().lower()
+        if choice in ["", "y", "yes"]:
+            with open(filepath, "a", encoding="utf-8") as f:
+                f.write("\n---\n")
+                f.write("## Meeting Summary\n\n")
+                f.write(summary)
+                f.write("\n")
+            print(f"✅ Summary appended to: {filepath}")
+        else:
+            print("   Summary not saved to file")
+    else:
+        print("❌ Failed to generate summary")
+        sys.exit(1)
+
+
+def chat_with_transcript(filepath: str) -> None:
+    """Start an interactive chat session with a transcript."""
+    if not os.path.exists(filepath):
+        print(f"❌ File not found: {filepath}")
+        sys.exit(1)
+
+    print(f"📄 Loading transcript: {filepath}")
+
+    with open(filepath, encoding="utf-8") as f:
+        transcript_content = f.read()
+
+    # Initialize Bedrock client
+    bedrock = boto3.client("bedrock-runtime", region_name=AWS_REGION)
+
+    # System prompt with transcript context
+    system_prompt = f"""You are a helpful assistant that answers questions about a meeting transcript.
+You have access to the full transcript below. Answer questions accurately based on what was discussed.
+If something wasn't mentioned in the meeting, say so.
+
+=== MEETING TRANSCRIPT ===
+{transcript_content}
+=== END TRANSCRIPT ==="""
+
+    # Conversation history for multi-turn chat
+    messages: list[dict[str, str]] = []
+
+    print("\n" + "=" * 60)
+    print("💬 Chat with Meeting Transcript")
+    print("=" * 60)
+    print("Ask questions about the meeting. Type 'quit' or 'exit' to end.")
+    print("=" * 60)
+
+    while True:
+        try:
+            user_input = input("\n🧑 You: ").strip()
+
+            if user_input.lower() in ["quit", "exit", "q"]:
+                print("\n👋 Ending chat session. Goodbye!")
+                break
+
+            if not user_input:
+                continue
+
+            # Add user message to history
+            messages.append({"role": "user", "content": user_input})
+
+            print("\n🤖 Assistant: ", end="", flush=True)
+
+            # Call Bedrock
+            response = bedrock.invoke_model(
+                modelId=BEDROCK_MODEL_ID,
+                body=json.dumps(
+                    {
+                        "anthropic_version": "bedrock-2023-05-31",
+                        "max_tokens": 1024,
+                        "system": system_prompt,
+                        "messages": messages,
+                    }
+                ),
+            )
+
+            result = json.loads(response["body"].read())
+            assistant_message = result["content"][0]["text"]
+
+            # Add assistant response to history
+            messages.append({"role": "assistant", "content": assistant_message})
+
+            print(assistant_message)
+
+        except KeyboardInterrupt:
+            print("\n\n👋 Ending chat session. Goodbye!")
+            break
+        except Exception as e:
+            print(f"\n⚠️  Error: {e}")
+            # Remove the failed user message from history
+            if messages and messages[-1]["role"] == "user":
+                messages.pop()
+
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Live audio transcription with meeting summarization",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python transcribe_live.py                    # Start live transcription
+  python transcribe_live.py --summarize FILE   # Summarize existing transcript
+  python transcribe_live.py --chat FILE        # Chat with a transcript
+        """,
+    )
+    parser.add_argument(
+        "--summarize",
+        metavar="FILE",
+        help="Summarize an existing transcript file instead of live transcription",
+    )
+    parser.add_argument(
+        "--chat",
+        metavar="FILE",
+        help="Start interactive chat with a transcript file",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+
+    if args.chat:
+        chat_with_transcript(args.chat)
+    elif args.summarize:
+        summarize_existing_file(args.summarize)
+    else:
+        main()
