@@ -530,9 +530,9 @@
             </div>
 
             <div class="transcript-container">
-                <div class="transcript-header">Live Transcript</div>
+                <div class="transcript-header">Transcript</div>
                 <div id="transcript" class="transcript">
-                    <div class="empty-state">Select an audio device and click Start to begin transcription</div>
+                    <div class="empty-state">Select an audio device and click Start to begin recording. Transcription will appear after you stop.</div>
                 </div>
             </div>
         </div>
@@ -594,6 +594,7 @@
 
         let ws = null;
         let isRunning = false;
+        let isTranscribing = false;
         let reconnectTimer = null;
         let hasTranscript = false;
         let isSending = false;
@@ -655,7 +656,12 @@
         }
 
         function updateControlButton() {
-            if (isRunning) {
+            if (isTranscribing) {
+                controlBtn.textContent = 'Processing...';
+                controlBtn.className = 'btn-stop';
+                controlBtn.disabled = true;
+                deviceSelect.disabled = true;
+            } else if (isRunning) {
                 controlBtn.textContent = 'Stop';
                 controlBtn.className = 'btn-stop';
                 controlBtn.disabled = false;
@@ -686,26 +692,34 @@
 
                 isRunning = true;
                 updateControlButton();
-                clearTranscript();
+                showTranscriptMessage('Recording... Click Stop when finished to transcribe.');
 
             } catch (error) {
-                showError('Failed to start transcription');
+                showError('Failed to start recording');
             }
         }
 
         async function stopTranscription() {
             try {
-                await fetch('/api/stop', { method: 'POST' });
-                isRunning = false;
-                updateControlButton();
-                levelBar.style.width = '0%';
+                // The status will be updated via WebSocket as transcription progresses
+                const response = await fetch('/api/stop', { method: 'POST' });
+                if (!response.ok) {
+                    const data = await response.json();
+                    showError(data.error || 'Failed to stop');
+                }
+                // Refresh transcript list after processing completes
+                fetchTranscripts();
             } catch (error) {
-                showError('Failed to stop transcription');
+                showError('Failed to stop recording');
             }
         }
 
         function clearTranscript() {
             transcript.innerHTML = '';
+        }
+
+        function showTranscriptMessage(message) {
+            transcript.innerHTML = `<div class="empty-state">${message}</div>`;
         }
 
         function addTranscriptSegment(timestamp, text) {
@@ -737,12 +751,13 @@
 
         function updateStatus(status) {
             isRunning = status.running;
+            isTranscribing = status.transcribing || false;
             hasTranscript = status.has_transcript || false;
             loadedFile = status.loaded_file || null;
             updateControlButton();
             updateTranscriptSelector();
 
-            // Update recording badge on tab
+            // Update recording/transcribing badge on tab
             const recordTab = document.querySelector('[data-tab="record"]');
             const existingBadge = recordTab.querySelector('.badge');
             if (existingBadge) existingBadge.remove();
@@ -751,12 +766,27 @@
                 badge.className = 'badge';
                 badge.textContent = 'LIVE';
                 recordTab.appendChild(badge);
+            } else if (status.transcribing) {
+                const badge = document.createElement('span');
+                badge.className = 'badge';
+                badge.style.background = '#4ecca3';
+                badge.textContent = 'PROCESSING';
+                recordTab.appendChild(badge);
             }
 
             if (status.running) {
                 statusDot.classList.add('recording');
                 statusText.textContent = `Recording from ${status.device}`;
                 updateElapsedTime(status.elapsed_seconds);
+            } else if (status.transcribing) {
+                statusDot.classList.remove('recording');
+                statusText.textContent = 'Transcribing audio...';
+                updateElapsedTime(status.elapsed_seconds);
+                levelBar.style.width = '0%';
+                // Show processing message if transcript is empty
+                if (!transcript.querySelector('.transcript-segment')) {
+                    showTranscriptMessage('Processing audio... This may take a moment.');
+                }
             } else {
                 statusDot.classList.remove('recording');
                 statusText.textContent = 'Ready';
@@ -772,8 +802,8 @@
                 unloadBtn.style.display = 'inline-block';
                 transcriptSelect.disabled = true;
                 loadBtn.disabled = true;
-            } else if (isRunning) {
-                loadedIndicator.textContent = 'Live recording';
+            } else if (isRunning || isTranscribing) {
+                loadedIndicator.textContent = isTranscribing ? 'Processing...' : 'Recording...';
                 loadedIndicator.style.display = 'flex';
                 unloadBtn.style.display = 'none';
                 transcriptSelect.disabled = true;

@@ -11,6 +11,7 @@ import json
 import os
 import signal
 import sys
+import wave
 from datetime import datetime
 
 import boto3
@@ -23,10 +24,9 @@ from faster_whisper import WhisperModel
 load_dotenv()
 
 # Configuration
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3")
 DEVICE = os.getenv("DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("COMPUTE_TYPE", "int8")
-CHUNK_DURATION = int(os.getenv("CHUNK_DURATION", "60"))
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "transcripts")
 
 # AWS Bedrock Configuration
@@ -56,6 +56,25 @@ def create_transcript_file():
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     filename = f"transcript_{timestamp}.txt"
     return os.path.join(OUTPUT_DIR, filename)
+
+
+def create_wav_file() -> tuple[str, wave.Wave_write]:
+    """Create a new WAV file for recording with timestamp in filename.
+
+    Returns:
+        Tuple of (filepath, wave file handle)
+    """
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    filename = f"recording_{timestamp}.wav"
+    filepath = os.path.join(OUTPUT_DIR, filename)
+
+    wf = wave.open(filepath, "wb")
+    wf.setnchannels(CHANNELS)
+    wf.setsampwidth(2)  # 16-bit audio = 2 bytes
+    wf.setframerate(RATE)
+
+    return filepath, wf
 
 
 def format_elapsed_time(start_time):
@@ -228,6 +247,57 @@ def transcribe_audio_buffer(model, audio_data, sample_rate):
         return None
 
 
+def transcribe_wav_file(model: WhisperModel, wav_path: str) -> str | None:
+    """Transcribe a complete WAV file using Whisper.
+
+    faster-whisper handles long files efficiently with internal chunking.
+    Returns timestamped transcript lines.
+
+    Args:
+        model: Loaded Whisper model
+        wav_path: Path to WAV file
+
+    Returns:
+        Timestamped transcript text or None if transcription failed
+    """
+    try:
+        print(f"   Loading audio file: {wav_path}")
+
+        # faster-whisper can transcribe directly from file path
+        segments, info = model.transcribe(
+            wav_path,
+            language=None,  # Auto-detect language
+            vad_filter=True,  # Use Voice Activity Detection
+            beam_size=5,
+        )
+
+        print(f"   Detected language: {info.language} (probability: {info.language_probability:.2f})")
+        print("   Transcribing...")
+
+        # Collect all segments with their timestamps
+        transcribed_segments = []
+        for segment in segments:
+            text = segment.text.strip()
+            if text:
+                # Format timestamp as [MM:SS] or [HH:MM:SS]
+                start_time = int(segment.start)
+                hours, remainder = divmod(start_time, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                if hours > 0:
+                    timestamp = f"[{hours:02d}:{minutes:02d}:{seconds:02d}]"
+                else:
+                    timestamp = f"[{minutes:02d}:{seconds:02d}]"
+                transcribed_segments.append(f"{timestamp} {text}")
+
+        if transcribed_segments:
+            return "\n".join(transcribed_segments)
+        return None
+
+    except Exception as e:
+        print(f"\n⚠️  Transcription error: {e}")
+        return None
+
+
 def main():
     """Main function to run live transcription."""
     global running
@@ -249,8 +319,9 @@ def main():
     # Initialize PyAudio
     p = pyaudio.PyAudio()
 
-    # Create transcript file
+    # Create transcript and WAV files
     transcript_path = create_transcript_file()
+    wav_path, wav_file = create_wav_file()
     device_name = devices[device_idx]["name"]
     start_time = datetime.now()
 
@@ -265,85 +336,53 @@ def main():
             frames_per_buffer=CHUNK,
         )
 
-        # Open transcript file and write header
-        transcript_file = open(transcript_path, "w", encoding="utf-8")
-        transcript_file.write(f"Transcript started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-        transcript_file.write(f"Audio device: {device_name}\n")
-        transcript_file.write(f"Model: {WHISPER_MODEL}\n")
-        transcript_file.write("\n")
-        transcript_file.flush()
-
         print("=" * 60)
         print("🎤 Recording started! Speak or play audio...")
-        print(f"⏱️  Buffer duration: {CHUNK_DURATION} seconds")
-        print(f"📝 Saving to: {transcript_path}")
-        print("🛑 Press Ctrl+C to stop")
+        print(f"🎵 Saving audio to: {wav_path}")
+        print(f"📝 Transcript will be saved to: {transcript_path}")
+        print("🛑 Press Ctrl+C to stop recording and transcribe")
         print("=" * 60)
         print()
 
-        # Calculate number of chunks for buffer duration
-        chunks_per_buffer = int(RATE / CHUNK * CHUNK_DURATION)
-        audio_buffer = []
-        chunk_count = 0
+        # Recording loop variables
         level_display_interval = int(RATE / CHUNK * 0.5)  # Update level every 0.5 seconds
         level_counter = 0
-        transcript_segments = []  # Track all transcribed text for summarization
+        total_frames = 0
 
         while running:
             try:
                 # Read audio chunk
                 data = stream.read(CHUNK, exception_on_overflow=False)
+
+                # Write to WAV file immediately (crash safety)
+                wav_file.writeframes(data)
+
+                # Update counters
                 audio_chunk = np.frombuffer(data, dtype=np.int16)
-                audio_buffer.append(audio_chunk)
-                chunk_count += 1
+                total_frames += len(audio_chunk)
                 level_counter += 1
 
-                # Show audio level periodically so user knows it's working
+                # Show audio level meter periodically
                 if level_counter >= level_display_interval:
                     level = np.abs(audio_chunk).mean()
-                    # Create a simple level meter (0-50 scale)
                     bar_length = min(int(level / 500), 30)
                     bar = "█" * bar_length + "░" * (30 - bar_length)
-                    elapsed = chunk_count * CHUNK / RATE
-                    remaining = CHUNK_DURATION - elapsed
+
+                    # Calculate elapsed time
+                    elapsed_seconds = total_frames / RATE
+                    hours, remainder = divmod(int(elapsed_seconds), 3600)
+                    minutes, seconds = divmod(remainder, 60)
+                    if hours > 0:
+                        time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                    else:
+                        time_str = f"{minutes:02d}:{seconds:02d}"
+
                     print(
-                        f"\r🎚️  [{bar}] {level:5.0f}  ⏱️ {remaining:.0f}s until transcribe",
+                        f"\r🎚️  [{bar}] {level:5.0f}  ⏱️ Recording: {time_str}",
                         end="",
                         flush=True,
                     )
                     level_counter = 0
-
-                # Process buffer when full
-                if chunk_count >= chunks_per_buffer:
-                    print()  # New line after the level meter
-                    # Concatenate all chunks
-                    audio_data = np.concatenate(audio_buffer)
-
-                    # Check if there's actual audio (not silence)
-                    avg_level = np.abs(audio_data).mean()
-                    if avg_level > 10:  # Simple silence detection
-                        print(f"🔄 Transcribing... (avg level: {avg_level:.0f})")
-                        text = transcribe_audio_buffer(model, audio_data, RATE)
-
-                        if text and text.strip():
-                            timestamp = format_elapsed_time(start_time)
-                            print(f"💬 {text}")
-                            print()
-                            # Write to transcript file
-                            transcript_file.write(f"{timestamp} {text}\n")
-                            transcript_file.flush()
-                            # Track for summarization
-                            transcript_segments.append(text)
-                        else:
-                            print("   (no speech detected)")
-                            print()
-                    else:
-                        print(f"   (silence - avg level: {avg_level:.0f})")
-                        print()
-
-                    # Reset buffer
-                    audio_buffer = []
-                    chunk_count = 0
 
             except KeyboardInterrupt:
                 break
@@ -351,22 +390,74 @@ def main():
                 print(f"\n⚠️  Error reading audio: {e}")
                 continue
 
-        # Clean up
+        # Clean up audio stream
+        print("\n")
         stream.stop_stream()
         stream.close()
         p.terminate()
 
-        # Write transcript footer
-        end_time = datetime.now()
-        transcript_file.write("\n---\n")
-        transcript_file.write(f"Transcript ended: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-        transcript_file.write(f"Duration: {format_duration(start_time, end_time)}\n")
+        # Close WAV file
+        wav_file.close()
 
-        # Generate summary if we have transcript content
-        if transcript_segments:
-            print("\n🤖 Generating meeting summary...")
-            full_transcript = " ".join(transcript_segments)
-            summary = summarize_transcript(full_transcript)
+        # Calculate recording duration
+        recording_duration = total_frames / RATE
+        hours, remainder = divmod(int(recording_duration), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            duration_str = f"{hours}:{minutes:02d}:{seconds:02d}"
+        else:
+            duration_str = f"{minutes}:{seconds:02d}"
+
+        print("=" * 60)
+        print("🛑 Recording stopped!")
+        print(f"   Duration: {duration_str}")
+        print(f"   Audio saved to: {wav_path}")
+        print("=" * 60)
+        print()
+
+        # Check if recording is too short
+        if recording_duration < 1.0:
+            print("⚠️  Recording too short - no transcription generated")
+            return
+
+        # Transcribe the full recording
+        print("🔄 Transcribing audio...")
+        print("   (This may take a while for long recordings)")
+        print()
+
+        transcript_text = transcribe_wav_file(model, wav_path)
+
+        # Open transcript file and write content
+        transcript_file = open(transcript_path, "w", encoding="utf-8")
+        transcript_file.write(f"Transcript started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        transcript_file.write(f"Audio device: {device_name}\n")
+        transcript_file.write(f"Audio file: {wav_path}\n")
+        transcript_file.write(f"Model: {WHISPER_MODEL}\n")
+        transcript_file.write(f"Duration: {duration_str}\n")
+        transcript_file.write("\n")
+
+        if transcript_text:
+            # Write transcript
+            transcript_file.write(transcript_text)
+            transcript_file.write("\n")
+            transcript_file.flush()
+
+            # Display transcript
+            print("=" * 60)
+            print("📝 Transcript:")
+            print("=" * 60)
+            print(transcript_text)
+            print()
+
+            # Generate summary
+            print("🤖 Generating meeting summary...")
+            # Strip timestamps for summary input
+            plain_text = " ".join(
+                line.split("]", 1)[1].strip() if "]" in line else line
+                for line in transcript_text.split("\n")
+                if line.strip()
+            )
+            summary = summarize_transcript(plain_text)
 
             if summary:
                 transcript_file.write("\n---\n")
@@ -379,12 +470,14 @@ def main():
                 print("=" * 60)
                 print(summary)
         else:
-            print("\n   (No transcript content to summarize)")
+            print("   (No speech detected in recording)")
+            transcript_file.write("(No speech detected)\n")
 
         transcript_file.close()
 
         print("\n" + "=" * 60)
-        print("✅ Transcription stopped. Goodbye!")
+        print("✅ Done!")
+        print(f"🎵 Audio saved to: {wav_path}")
         print(f"📝 Transcript saved to: {transcript_path}")
         print("=" * 60)
 
@@ -533,22 +626,95 @@ If something wasn't mentioned in the meeting, say so.
                 messages.pop()
 
 
+def transcribe_existing_audio(filepath: str) -> None:
+    """Transcribe an existing audio file (WAV, MP3, etc.)."""
+    if not os.path.exists(filepath):
+        print(f"❌ File not found: {filepath}")
+        sys.exit(1)
+
+    print("=" * 60)
+    print("🎵 Transcribing existing audio file")
+    print("=" * 60)
+    print(f"   Audio file: {filepath}")
+    print()
+
+    # Load Whisper model
+    model = load_whisper_model()
+
+    # Transcribe
+    print("🔄 Transcribing audio...")
+    transcript_text = transcribe_wav_file(model, filepath)
+
+    if transcript_text:
+        # Create transcript file
+        transcript_path = create_transcript_file()
+
+        with open(transcript_path, "w", encoding="utf-8") as f:
+            f.write(f"Transcription of: {filepath}\n")
+            f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Model: {WHISPER_MODEL}\n")
+            f.write("\n")
+            f.write(transcript_text)
+            f.write("\n")
+
+        # Display transcript
+        print("\n" + "=" * 60)
+        print("📝 Transcript:")
+        print("=" * 60)
+        print(transcript_text)
+
+        # Generate summary
+        print("\n🤖 Generating meeting summary...")
+        plain_text = " ".join(
+            line.split("]", 1)[1].strip() if "]" in line else line
+            for line in transcript_text.split("\n")
+            if line.strip()
+        )
+        summary = summarize_transcript(plain_text)
+
+        if summary:
+            with open(transcript_path, "a", encoding="utf-8") as f:
+                f.write("\n---\n")
+                f.write("## Meeting Summary\n\n")
+                f.write(summary)
+                f.write("\n")
+
+            print("\n" + "=" * 60)
+            print("📋 Meeting Summary:")
+            print("=" * 60)
+            print(summary)
+
+        print("\n" + "=" * 60)
+        print("✅ Done!")
+        print(f"📝 Transcript saved to: {transcript_path}")
+        print("=" * 60)
+    else:
+        print("❌ No speech detected in audio file")
+        sys.exit(1)
+
+
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Live audio transcription with meeting summarization",
+        description="Audio recording and transcription with meeting summarization",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python transcribe_live.py                    # Start live transcription
-  python transcribe_live.py --summarize FILE   # Summarize existing transcript
-  python transcribe_live.py --chat FILE        # Chat with a transcript
+  python transcribe_live.py                        # Record and transcribe
+  python transcribe_live.py --transcribe-audio F   # Transcribe existing audio file
+  python transcribe_live.py --summarize FILE       # Summarize existing transcript
+  python transcribe_live.py --chat FILE            # Chat with a transcript
         """,
+    )
+    parser.add_argument(
+        "--transcribe-audio",
+        metavar="FILE",
+        help="Transcribe an existing audio file (WAV, MP3, etc.) instead of recording",
     )
     parser.add_argument(
         "--summarize",
         metavar="FILE",
-        help="Summarize an existing transcript file instead of live transcription",
+        help="Summarize an existing transcript file instead of recording",
     )
     parser.add_argument(
         "--chat",
@@ -563,6 +729,8 @@ if __name__ == "__main__":
 
     if args.chat:
         chat_with_transcript(args.chat)
+    elif args.transcribe_audio:
+        transcribe_existing_audio(args.transcribe_audio)
     elif args.summarize:
         summarize_existing_file(args.summarize)
     else:

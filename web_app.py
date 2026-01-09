@@ -13,6 +13,7 @@ import json
 import os
 import threading
 import time
+import wave
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -32,10 +33,9 @@ from faster_whisper import WhisperModel
 load_dotenv()
 
 # Configuration (reuse from transcribe_live.py settings)
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3")
 DEVICE = os.getenv("DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("COMPUTE_TYPE", "int8")
-CHUNK_DURATION = int(os.getenv("CHUNK_DURATION", "60"))
 
 # AWS Bedrock Configuration
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
@@ -59,66 +59,79 @@ class TranscriptionState:
 
     def __init__(self) -> None:
         self.running = False
+        self.transcribing = False  # True while processing audio after recording stops
         self.model: WhisperModel | None = None
         self.device_name: str = ""
         self.start_time: datetime | None = None
+        self.end_time: datetime | None = None
         self.worker_thread: threading.Thread | None = None
         self.transcript_segments: list[dict[str, str]] = []
         self.chat_history: list[dict[str, str]] = []
         self.transcript_file: Any = None
         self.transcript_path: str = ""
+        self.wav_path: str = ""
+        self.wav_file: wave.Wave_write | None = None
+        self.total_frames: int = 0
         self._lock = threading.Lock()
 
     def start(self, device_name: str) -> None:
         with self._lock:
             self.running = True
+            self.transcribing = False
             self.device_name = device_name
             self.start_time = datetime.now()
+            self.end_time = None
             self.transcript_segments = []
             self.chat_history = []
-            # Create transcript file
+            self.total_frames = 0
+
+            # Create output directory
             os.makedirs(OUTPUT_DIR, exist_ok=True)
             timestamp = self.start_time.strftime("%Y-%m-%d_%H-%M-%S")
-            self.transcript_path = os.path.join(OUTPUT_DIR, f"transcript_{timestamp}.txt")
-            self.transcript_file = open(self.transcript_path, "w", encoding="utf-8")
-            self.transcript_file.write(f"Transcript started: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            self.transcript_file.write(f"Audio device: {device_name}\n")
-            self.transcript_file.write(f"Model: {WHISPER_MODEL}\n")
-            self.transcript_file.write("\n")
-            self.transcript_file.flush()
 
-    def stop(self) -> None:
+            # Create WAV file for recording
+            self.wav_path = os.path.join(OUTPUT_DIR, f"recording_{timestamp}.wav")
+            self.wav_file = wave.open(self.wav_path, "wb")
+            self.wav_file.setnchannels(CHANNELS)
+            self.wav_file.setsampwidth(2)  # 16-bit audio = 2 bytes
+            self.wav_file.setframerate(RATE)
+
+            # Set transcript path (will be written after transcription)
+            self.transcript_path = os.path.join(OUTPUT_DIR, f"transcript_{timestamp}.txt")
+
+    def stop_recording(self) -> str:
+        """Stop recording and close WAV file. Returns WAV path for transcription."""
         with self._lock:
             self.running = False
-            # Close transcript file with footer
-            if self.transcript_file:
-                end_time = datetime.now()
-                self.transcript_file.write("\n---\n")
-                self.transcript_file.write(f"Transcript ended: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                if self.start_time:
-                    elapsed = end_time - self.start_time
-                    total_seconds = int(elapsed.total_seconds())
-                    hours, remainder = divmod(total_seconds, 3600)
-                    minutes, seconds = divmod(remainder, 60)
-                    if hours > 0:
-                        duration = f"{hours}:{minutes:02d}:{seconds:02d}"
-                    else:
-                        duration = f"{minutes}:{seconds:02d}"
-                    self.transcript_file.write(f"Duration: {duration}\n")
-                self.transcript_file.close()
-                self.transcript_file = None
+            self.end_time = datetime.now()
+
+            # Close WAV file
+            wav_path = self.wav_path
+            if self.wav_file:
+                self.wav_file.close()
+                self.wav_file = None
+
+            return wav_path
+
+    def set_transcribing(self, value: bool) -> None:
+        with self._lock:
+            self.transcribing = value
+
+    def write_audio_frame(self, data: bytes) -> None:
+        """Write audio data to WAV file."""
+        with self._lock:
+            if self.wav_file:
+                self.wav_file.writeframes(data)
+                self.total_frames += len(data) // 2  # 16-bit = 2 bytes per sample
 
     def is_running(self) -> bool:
         with self._lock:
             return self.running
 
     def add_transcript(self, timestamp: str, text: str) -> None:
+        """Add a transcript segment (used after transcription completes)."""
         with self._lock:
             self.transcript_segments.append({"timestamp": timestamp, "text": text})
-            # Write to file
-            if self.transcript_file:
-                self.transcript_file.write(f"{timestamp} {text}\n")
-                self.transcript_file.flush()
 
     def get_transcript_text(self) -> str:
         with self._lock:
@@ -167,15 +180,20 @@ class TranscriptionState:
     def get_status(self) -> dict[str, Any]:
         with self._lock:
             elapsed = 0
-            if self.start_time and self.running:
-                elapsed = int((datetime.now() - self.start_time).total_seconds())
+            if self.start_time:
+                if self.running:
+                    elapsed = int((datetime.now() - self.start_time).total_seconds())
+                elif self.end_time:
+                    elapsed = int((self.end_time - self.start_time).total_seconds())
             loaded_file = getattr(self, "loaded_file", "")
             return {
                 "running": self.running,
+                "transcribing": self.transcribing,
                 "device": self.device_name,
                 "elapsed_seconds": elapsed,
                 "has_transcript": len(self.transcript_segments) > 0,
                 "loaded_file": os.path.basename(loaded_file) if loaded_file else None,
+                "wav_path": os.path.basename(self.wav_path) if self.wav_path else None,
             }
 
 
@@ -250,34 +268,43 @@ def load_model() -> WhisperModel:
     return state.model
 
 
-def transcribe_audio_buffer(model: WhisperModel, audio_data: np.ndarray) -> str | None:
-    """Transcribe an audio buffer using Whisper."""
+def transcribe_wav_file(model: WhisperModel, wav_path: str) -> list[dict[str, str]]:
+    """Transcribe a complete WAV file and return timestamped segments.
+
+    Returns list of {"timestamp": "[MM:SS]", "text": "..."} dicts.
+    """
+    segments_list: list[dict[str, str]] = []
+
     try:
-        audio_float = audio_data.astype(np.float32) / 32768.0
-        segments, _ = model.transcribe(
-            audio_float,
+        # faster-whisper can transcribe directly from file path
+        segments, info = model.transcribe(
+            wav_path,
             language=None,
             vad_filter=True,
             beam_size=5,
         )
-        text = " ".join([segment.text.strip() for segment in segments])
-        return text if text.strip() else None
-    except Exception:
-        return None
 
+        for segment in segments:
+            text = segment.text.strip()
+            if text:
+                # Format timestamp as [MM:SS] or [HH:MM:SS]
+                start_time = int(segment.start)
+                hours, remainder = divmod(start_time, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                if hours > 0:
+                    timestamp = f"[{hours:02d}:{minutes:02d}:{seconds:02d}]"
+                else:
+                    timestamp = f"[{minutes:02d}:{seconds:02d}]"
+                segments_list.append({"timestamp": timestamp, "text": text})
 
-def format_elapsed_time(start_time: datetime) -> str:
-    """Format elapsed time as [HH:MM:SS]."""
-    elapsed = datetime.now() - start_time
-    total_seconds = int(elapsed.total_seconds())
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"[{hours:02d}:{minutes:02d}:{seconds:02d}]"
+    except Exception as e:
+        print(f"Transcription error: {e}")
+
+    return segments_list
 
 
 def audio_worker(device_idx: int) -> None:
-    """Background worker for audio capture and transcription."""
-    model = load_model()
+    """Background worker for audio capture (recording only, no transcription)."""
     p = pyaudio.PyAudio()
 
     try:
@@ -290,47 +317,23 @@ def audio_worker(device_idx: int) -> None:
             frames_per_buffer=CHUNK,
         )
 
-        chunks_per_buffer = int(RATE / CHUNK * CHUNK_DURATION)
-        audio_buffer: list[np.ndarray] = []
-        chunk_count = 0
         last_level_time = 0.0
 
         while state.is_running():
             try:
+                # Read audio chunk
                 data = stream.read(CHUNK, exception_on_overflow=False)
-                audio_chunk = np.frombuffer(data, dtype=np.int16)
-                audio_buffer.append(audio_chunk)
-                chunk_count += 1
+
+                # Write to WAV file (crash-safe incremental writes)
+                state.write_audio_frame(data)
 
                 # Send level updates (throttled)
                 current_time = time.time()
                 if current_time - last_level_time >= LEVEL_UPDATE_INTERVAL:
+                    audio_chunk = np.frombuffer(data, dtype=np.int16)
                     level = float(np.abs(audio_chunk).mean())
                     level_queue.put(level)
                     last_level_time = current_time
-
-                # Process buffer when full
-                if chunk_count >= chunks_per_buffer:
-                    audio_data = np.concatenate(audio_buffer)
-                    avg_level = np.abs(audio_data).mean()
-
-                    if avg_level > 10:  # Not silence
-                        text = transcribe_audio_buffer(model, audio_data)
-                        if text and state.start_time:
-                            timestamp = format_elapsed_time(state.start_time)
-                            elapsed = int((datetime.now() - state.start_time).total_seconds())
-                            # Store transcript for chat context
-                            state.add_transcript(timestamp, text)
-                            transcript_queue.put(
-                                {
-                                    "text": text,
-                                    "timestamp": timestamp,
-                                    "elapsed_seconds": elapsed,
-                                }
-                            )
-
-                    audio_buffer = []
-                    chunk_count = 0
 
             except Exception:
                 continue
@@ -372,7 +375,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
     # Cleanup
     task.cancel()
-    state.stop()
+    if state.is_running():
+        state.stop_recording()
 
 
 app = FastAPI(title="Live Transcription", lifespan=lifespan)
@@ -440,22 +444,73 @@ async def start_transcription(body: dict[str, Any]) -> JSONResponse:
 
 @app.post("/api/stop")
 async def stop_transcription() -> JSONResponse:
-    """Stop transcription."""
+    """Stop recording and transcribe the audio."""
     if not state.is_running():
         return JSONResponse(
-            status_code=400, content={"error": "Transcription not running"}
+            status_code=400, content={"error": "Recording not running"}
         )
 
-    state.stop()
+    # Stop recording and get WAV path
+    wav_path = state.stop_recording()
 
     # Wait for worker thread to finish
     if state.worker_thread:
         state.worker_thread.join(timeout=5.0)
 
-    # Broadcast status
+    # Broadcast "stopped recording, transcribing" status
+    state.set_transcribing(True)
     await manager.broadcast({"type": "status", **state.get_status()})
 
-    return JSONResponse(content={"status": "stopped"})
+    # Check recording duration
+    recording_duration = state.total_frames / RATE
+    if recording_duration < 1.0:
+        state.set_transcribing(False)
+        await manager.broadcast({"type": "status", **state.get_status()})
+        return JSONResponse(content={"status": "stopped", "message": "Recording too short"})
+
+    # Transcribe the WAV file (this may take a while)
+    model = load_model()
+    segments = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: transcribe_wav_file(model, wav_path)
+    )
+
+    # Add segments to state and broadcast each one
+    for seg in segments:
+        state.add_transcript(seg["timestamp"], seg["text"])
+        await manager.broadcast({
+            "type": "transcript",
+            "timestamp": seg["timestamp"],
+            "text": seg["text"],
+        })
+
+    # Write transcript file
+    if segments:
+        with open(state.transcript_path, "w", encoding="utf-8") as f:
+            f.write(f"Transcript started: {state.start_time.strftime('%Y-%m-%d %H:%M:%S') if state.start_time else ''}\n")
+            f.write(f"Audio device: {state.device_name}\n")
+            f.write(f"Audio file: {os.path.basename(wav_path)}\n")
+            f.write(f"Model: {WHISPER_MODEL}\n")
+            hours, remainder = divmod(int(recording_duration), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            if hours > 0:
+                duration_str = f"{hours}:{minutes:02d}:{seconds:02d}"
+            else:
+                duration_str = f"{minutes}:{seconds:02d}"
+            f.write(f"Duration: {duration_str}\n")
+            f.write("\n")
+            for seg in segments:
+                f.write(f"{seg['timestamp']} {seg['text']}\n")
+
+    # Done transcribing
+    state.set_transcribing(False)
+    await manager.broadcast({"type": "status", **state.get_status()})
+
+    return JSONResponse(content={
+        "status": "stopped",
+        "segments": len(segments),
+        "wav_path": os.path.basename(wav_path),
+        "transcript_path": os.path.basename(state.transcript_path),
+    })
 
 
 @app.get("/api/transcripts")
