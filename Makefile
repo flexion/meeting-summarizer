@@ -1,4 +1,4 @@
-.PHONY: help setup install install-dev check-system-deps run run-web lint format type-check clean
+.PHONY: help setup install install-dev install-playwright check-system-deps run run-web run-playwright-test run-breakout-test run-audio-test lint format type-check clean
 
 help:
 	@echo "Live Audio Transcription - Development Commands"
@@ -6,9 +6,13 @@ help:
 	@echo "make setup             - Create virtual environment"
 	@echo "make install           - Install production dependencies"
 	@echo "make install-dev       - Install development dependencies"
+	@echo "make install-playwright - Install Playwright browsers"
 	@echo "make check-system-deps - Check for required system dependencies"
 	@echo "make run               - Run the transcription script (CLI)"
 	@echo "make run-web           - Run the web UI server"
+	@echo "make run-playwright-test - Test Playwright Zoom bot (requires URL arg)"
+	@echo "make run-breakout-test - Test breakout room navigation (requires URL and ROOM args)"
+	@echo "make run-audio-test    - Test audio capture in meeting (requires URL arg)"
 	@echo "make lint              - Run linter"
 	@echo "make format            - Format code"
 	@echo "make type-check        - Run type checker"
@@ -37,6 +41,12 @@ install-dev:
 	@echo ""
 	@echo "Development dependencies installed!"
 
+install-playwright:
+	playwright install chromium
+	@echo ""
+	@echo "Playwright Chromium browser installed!"
+	@echo "Test with: make run-playwright-test URL=https://zoom.us/j/123456789"
+
 check-system-deps:
 	@echo "Checking system dependencies..."
 	@echo ""
@@ -54,6 +64,35 @@ run:
 
 run-web:
 	python3 -m uvicorn web_app:app --reload --host 127.0.0.1 --port 8000
+
+run-playwright-test:
+ifndef URL
+	@echo "Usage: make run-playwright-test URL=https://zoom.us/j/123456789"
+	@exit 1
+endif
+	python3 playwright_bot/test_join.py "$(URL)"
+
+run-breakout-test:
+ifndef URL
+	@echo "Usage: make run-breakout-test URL=https://zoom.us/j/123456789 ROOM='Room 1'"
+	@exit 1
+endif
+ifndef ROOM
+	@echo "Usage: make run-breakout-test URL=https://zoom.us/j/123456789 ROOM='Room 1'"
+	@exit 1
+endif
+	python3 playwright_bot/test_breakout.py "$(URL)" --room "$(ROOM)"
+
+run-audio-test:
+ifndef URL
+	@echo "Usage: make run-audio-test URL=https://zoom.us/j/123456789 [DURATION=30] [HEADED=1]"
+	@exit 1
+endif
+ifdef HEADED
+	python3 playwright_bot/test_audio.py "$(URL)" --headed --duration $(or $(DURATION),30)
+else
+	python3 playwright_bot/test_audio.py "$(URL)" --duration $(or $(DURATION),30)
+endif
 
 lint:
 	python3 -m ruff check .

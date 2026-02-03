@@ -1,6 +1,6 @@
 # Live Audio Transcription
 
-Real-time audio transcription using faster-whisper and BlackHole for macOS. Capture and transcribe audio from your microphone, system audio, or any application in real-time.
+Real-time audio transcription using faster-whisper and BlackHole for macOS. Capture and transcribe audio from your microphone, system audio, or any application in real-time. Includes a headless Zoom bot for automatic meeting and breakout room transcription.
 
 ## Features
 
@@ -10,6 +10,8 @@ Real-time audio transcription using faster-whisper and BlackHole for macOS. Capt
 - 🖥️ **Console output** - Simple, clean terminal interface
 - 🔧 **Configurable** - Multiple Whisper model sizes and settings
 - 🍎 **macOS optimized** - Uses BlackHole for audio routing
+- 🤖 **Zoom Bot** - Headless browser bot for automatic meeting transcription
+- 📍 **Breakout Rooms** - Auto-join and transcribe Zoom breakout rooms
 
 ## Prerequisites
 
@@ -134,6 +136,88 @@ Use this device? (Y/n): y
 🔄 Transcribing...
 💬 It's working great so far!
 ```
+
+## Zoom Web Bot
+
+The Zoom web bot joins meetings via headless browser, captures audio, and can automatically navigate to breakout rooms.
+
+### Prerequisites
+
+Install Playwright browser:
+
+```bash
+make install-playwright
+# or: playwright install chromium
+```
+
+### Basic Usage
+
+Join a meeting and capture audio:
+
+```bash
+# Join meeting (headed mode for testing)
+python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --headed --duration 60
+
+# Join meeting (headless)
+python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --duration 120
+
+# With transcription after recording
+python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --duration 60 --transcribe
+```
+
+### Breakout Room Support
+
+Join a specific breakout room (requires "Allow participants to choose room" enabled by host):
+
+```bash
+# Join meeting, wait for breakout rooms, then join "Room 1"
+python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --room "Room 1" --duration 60
+
+# List available breakout rooms only
+python playwright_bot/test_breakout.py "https://zoom.us/j/123456789" --list-only
+```
+
+### Using Makefile
+
+```bash
+# Basic audio capture test
+make run-audio-test URL="https://zoom.us/j/123456789"
+
+# With headed mode and custom duration
+make run-audio-test URL="https://zoom.us/j/123456789" HEADED=1 DURATION=60
+
+# Breakout room test
+make run-breakout-test URL="https://zoom.us/j/123456789" ROOM="Room 1"
+```
+
+### Bot Configuration
+
+Environment variables for the Zoom bot:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| PLAYWRIGHT_HEADLESS | true | Run browser in headless mode |
+| PLAYWRIGHT_TIMEOUT | 60000 | Default timeout in ms |
+| PLAYWRIGHT_SLOWMO | 0 | Slow down actions (ms) for debugging |
+| PLAYWRIGHT_DEBUG | false | Enable verbose logging |
+| PLAYWRIGHT_SCREENSHOTS | true | Take screenshots on errors |
+
+### Bot Features
+
+- **Auto-join**: Handles pre-join screen, name entry, audio setup
+- **Waiting room**: Waits for host admission (configurable timeout)
+- **Breakout rooms**: Detects when rooms open, joins by name
+- **Audio capture**: Captures meeting audio via Web Audio API
+- **Meeting monitoring**: Detects meeting end, auto-saves audio
+- **State machine**: Tracks bot state (IDLE → IN_MEETING → MEETING_ENDED)
+
+### Output Files
+
+Audio recordings saved to `transcripts/` directory:
+- `recording_YYYY-MM-DD_HH-MM-SS.wav` - Audio (16kHz, mono, 16-bit PCM)
+- `error_screenshot_*.png` - Screenshots on errors (if enabled)
+
+For detailed technical documentation, see [docs/zoom-breakout-bot.md](docs/zoom-breakout-bot.md).
 
 ## Configuration
 

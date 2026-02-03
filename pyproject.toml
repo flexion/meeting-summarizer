@@ -81,5 +81,7 @@ module = [
     "numpy.*",
     "boto3.*",
     "botocore.*",
+    "playwright.*",
+    "playwright.sync_api.*",
 ]
 ignore_missing_imports = true

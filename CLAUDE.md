@@ -4,17 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Live Audio Transcription with Meeting Summarization - a Python application for real-time audio transcription using faster-whisper with AWS Bedrock integration for AI-powered summarization and chat. Supports both CLI and web interfaces.
+Live Audio Transcription with Meeting Summarization - a Python application for real-time audio transcription using faster-whisper with AWS Bedrock integration for AI-powered summarization and chat. Supports CLI, web interfaces, and a headless Zoom bot for automatic meeting transcription.
 
 ## Architecture
 
-Two main entry points:
+Three main entry points:
 
 - **transcribe_live.py** - CLI for recording, transcription, summarization, and chat
 - **web_app.py** - FastAPI web server with WebSocket-based real-time UI
+- **playwright_bot/** - Headless Zoom bot for automatic meeting transcription
 
-Both share the same core workflow:
+CLI and web app share the same core workflow:
 1. Audio capture via PyAudio → WAV recording → faster-whisper transcription → AWS Bedrock summarization/chat
+
+Zoom bot workflow:
+1. Playwright browser → Zoom web client → Web Audio API capture → WAV recording → faster-whisper transcription
 
 ### Data Flow
 
@@ -42,6 +46,39 @@ AWS Bedrock Claude → Summary/Chat
 - **ConnectionManager** handles WebSocket broadcast to multiple clients
 - Background thread for audio capture; async task for client broadcasts
 
+### Zoom Bot Architecture (playwright_bot/)
+
+```
+playwright_bot/
+├── zoom_web_bot.py          # Main bot controller, state machine
+├── meeting_monitor.py       # Background thread for meeting status
+├── selectors.py             # Centralized CSS selectors for Zoom UI
+├── exceptions.py            # Custom exceptions
+├── audio/
+│   ├── capturer.py          # Web Audio API injection for browser audio
+│   └── processor.py         # Audio format conversion (48kHz→16kHz)
+└── page_objects/
+    ├── pre_join_page.py     # Pre-join screen handling
+    ├── waiting_room_page.py # Waiting room handling
+    ├── meeting_page.py      # In-meeting detection + status
+    └── breakout_room_page.py # Breakout room navigation
+```
+
+**Bot State Machine:**
+```
+IDLE → LAUNCHING → NAVIGATING → PRE_JOIN → JOINING → WAITING_ROOM → IN_MEETING
+                                                                    ↓
+                                          IN_BREAKOUT_ROOM ← JOINING_BREAKOUT
+                                                    ↓
+                                              MEETING_ENDED
+```
+
+**Audio Capture Flow:**
+```
+Zoom WebRTC (48kHz stereo) → ScriptProcessorNode → Base64 → Python
+    → scipy resample (16kHz mono) → WAV file
+```
+
 ## Development Commands
 
 ```bash
@@ -62,6 +99,11 @@ make run-web            # Web: uvicorn web_app:app --reload
 make format             # ruff format + ruff check --fix
 make lint               # ruff check
 make type-check         # mypy transcribe_live.py
+
+# Zoom Bot
+make install-playwright # Install Playwright browser
+make run-audio-test URL="https://zoom.us/j/123" HEADED=1 DURATION=60
+make run-breakout-test URL="https://zoom.us/j/123" ROOM="Room 1"
 ```
 
 ### CLI Commands
@@ -80,6 +122,25 @@ python transcribe_live.py --summarize transcripts/transcript_*.txt
 python transcribe_live.py --chat transcripts/transcript_*.txt
 ```
 
+### Zoom Bot Commands
+
+```bash
+# Join meeting and capture audio (headed mode for testing)
+python playwright_bot/test_audio.py "https://zoom.us/j/123" --headed --duration 60
+
+# Join meeting headless with transcription
+python playwright_bot/test_audio.py "https://zoom.us/j/123" --duration 60 --transcribe
+
+# Join specific breakout room
+python playwright_bot/test_audio.py "https://zoom.us/j/123" --room "Room 1" --duration 60
+
+# List available breakout rooms
+python playwright_bot/test_breakout.py "https://zoom.us/j/123" --list-only
+
+# Test meeting join only (no audio)
+python playwright_bot/test_join.py "https://zoom.us/j/123" --headed
+```
+
 ## Configuration
 
 Environment variables via `.env` file:
@@ -94,6 +155,9 @@ Environment variables via `.env` file:
 | BEDROCK_MODEL_ID | global.anthropic.claude-sonnet-4-5-20250929-v1:0 | Claude model for summarization |
 | WEB_HOST | 127.0.0.1 | Web server host |
 | WEB_PORT | 8000 | Web server port |
+| PLAYWRIGHT_HEADLESS | true | Run Zoom bot browser headless |
+| PLAYWRIGHT_TIMEOUT | 60000 | Bot timeout in ms |
+| PLAYWRIGHT_DEBUG | false | Enable verbose bot logging |
 
 ## Key Implementation Details
 
