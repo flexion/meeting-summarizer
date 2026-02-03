@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from faster_whisper import WhisperModel
 
+
 # Load environment variables
 load_dotenv()
 
@@ -268,8 +269,10 @@ def load_model() -> WhisperModel:
     return state.model
 
 
-def transcribe_wav_file(model: WhisperModel, wav_path: str) -> list[dict[str, str]]:
-    """Transcribe a complete WAV file and return timestamped segments.
+def transcribe_wav_file_streaming(
+    model: WhisperModel, wav_path: str, audio_duration: float, progress_queue: Queue[dict[str, Any]]
+) -> list[dict[str, str]]:
+    """Transcribe a WAV file and send progress updates via queue.
 
     Returns list of {"timestamp": "[MM:SS]", "text": "..."} dicts.
     """
@@ -284,6 +287,7 @@ def transcribe_wav_file(model: WhisperModel, wav_path: str) -> list[dict[str, st
             beam_size=5,
         )
 
+        # Iterate through the generator - this yields segments as they're processed
         for segment in segments:
             text = segment.text.strip()
             if text:
@@ -295,11 +299,25 @@ def transcribe_wav_file(model: WhisperModel, wav_path: str) -> list[dict[str, st
                     timestamp = f"[{hours:02d}:{minutes:02d}:{seconds:02d}]"
                 else:
                     timestamp = f"[{minutes:02d}:{seconds:02d}]"
-                segments_list.append({"timestamp": timestamp, "text": text})
+
+                seg_data = {"timestamp": timestamp, "text": text}
+                segments_list.append(seg_data)
+
+                # Calculate progress based on segment end time vs total duration
+                progress = min(segment.end / audio_duration, 1.0) if audio_duration > 0 else 0
+                progress_queue.put({
+                    "type": "progress",
+                    "segment": seg_data,
+                    "progress": progress,
+                    "processed_seconds": segment.end,
+                    "total_seconds": audio_duration,
+                })
 
     except Exception as e:
         print(f"Transcription error: {e}")
+        progress_queue.put({"type": "error", "error": str(e)})
 
+    progress_queue.put({"type": "done", "segments": len(segments_list)})
     return segments_list
 
 
@@ -411,6 +429,15 @@ async def get_status() -> dict[str, Any]:
     return state.get_status()
 
 
+@app.post("/api/reset")
+async def reset_state() -> JSONResponse:
+    """Reset stuck state (use if UI gets stuck)."""
+    state.running = False
+    state.transcribing = False
+    await manager.broadcast({"type": "status", **state.get_status()})
+    return JSONResponse(content={"status": "reset"})
+
+
 @app.post("/api/start")
 async def start_transcription(body: dict[str, Any]) -> JSONResponse:
     """Start transcription with specified device."""
@@ -468,49 +495,101 @@ async def stop_transcription() -> JSONResponse:
         await manager.broadcast({"type": "status", **state.get_status()})
         return JSONResponse(content={"status": "stopped", "message": "Recording too short"})
 
-    # Transcribe the WAV file (this may take a while)
-    model = load_model()
-    segments = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: transcribe_wav_file(model, wav_path)
-    )
+    try:
+        # Transcribe the WAV file with streaming progress
+        print(f"Loading model: {WHISPER_MODEL}...")
+        model = load_model()
+        print(f"Transcribing {wav_path} ({recording_duration:.1f}s of audio)...")
 
-    # Add segments to state and broadcast each one
-    for seg in segments:
-        state.add_transcript(seg["timestamp"], seg["text"])
-        await manager.broadcast({
-            "type": "transcript",
-            "timestamp": seg["timestamp"],
-            "text": seg["text"],
+        # Create a queue for progress updates
+        progress_queue: Queue[dict[str, Any]] = Queue()
+
+        # Start transcription in background thread
+        loop = asyncio.get_event_loop()
+        transcription_task = loop.run_in_executor(
+            None,
+            lambda: transcribe_wav_file_streaming(model, wav_path, recording_duration, progress_queue)
+        )
+
+        # Poll for progress updates while transcription runs
+        segments: list[dict[str, str]] = []
+        while True:
+            try:
+                # Check for progress updates (non-blocking)
+                update = await loop.run_in_executor(None, lambda: progress_queue.get(timeout=0.1))
+
+                if update["type"] == "progress":
+                    # Broadcast progress and segment to clients
+                    await manager.broadcast({
+                        "type": "transcription_progress",
+                        "progress": update["progress"],
+                        "processed_seconds": update["processed_seconds"],
+                        "total_seconds": update["total_seconds"],
+                    })
+                    # Also send the segment
+                    seg = update["segment"]
+                    state.add_transcript(seg["timestamp"], seg["text"])
+                    await manager.broadcast({
+                        "type": "transcript",
+                        "timestamp": seg["timestamp"],
+                        "text": seg["text"],
+                    })
+                    segments.append(seg)
+
+                elif update["type"] == "error":
+                    raise Exception(update["error"])
+
+                elif update["type"] == "done":
+                    print(f"Transcription complete: {update['segments']} segments")
+                    break
+
+            except Empty:
+                # No update yet, check if task is done
+                if transcription_task.done():
+                    break
+                continue
+
+        # Wait for transcription to fully complete
+        await transcription_task
+
+        # Write transcript file
+        if segments:
+            with open(state.transcript_path, "w", encoding="utf-8") as f:
+                f.write(f"Transcript started: {state.start_time.strftime('%Y-%m-%d %H:%M:%S') if state.start_time else ''}\n")
+                f.write(f"Audio device: {state.device_name}\n")
+                f.write(f"Audio file: {os.path.basename(wav_path)}\n")
+                f.write(f"Model: {WHISPER_MODEL}\n")
+                hours, remainder = divmod(int(recording_duration), 3600)
+                minutes, seconds = divmod(remainder, 60)
+                if hours > 0:
+                    duration_str = f"{hours}:{minutes:02d}:{seconds:02d}"
+                else:
+                    duration_str = f"{minutes}:{seconds:02d}"
+                f.write(f"Duration: {duration_str}\n")
+                f.write("\n")
+                for seg in segments:
+                    f.write(f"{seg['timestamp']} {seg['text']}\n")
+
+        # Done transcribing
+        state.set_transcribing(False)
+        await manager.broadcast({"type": "status", **state.get_status()})
+
+        return JSONResponse(content={
+            "status": "stopped",
+            "segments": len(segments),
+            "wav_path": os.path.basename(wav_path),
+            "transcript_path": os.path.basename(state.transcript_path),
         })
 
-    # Write transcript file
-    if segments:
-        with open(state.transcript_path, "w", encoding="utf-8") as f:
-            f.write(f"Transcript started: {state.start_time.strftime('%Y-%m-%d %H:%M:%S') if state.start_time else ''}\n")
-            f.write(f"Audio device: {state.device_name}\n")
-            f.write(f"Audio file: {os.path.basename(wav_path)}\n")
-            f.write(f"Model: {WHISPER_MODEL}\n")
-            hours, remainder = divmod(int(recording_duration), 3600)
-            minutes, seconds = divmod(remainder, 60)
-            if hours > 0:
-                duration_str = f"{hours}:{minutes:02d}:{seconds:02d}"
-            else:
-                duration_str = f"{minutes}:{seconds:02d}"
-            f.write(f"Duration: {duration_str}\n")
-            f.write("\n")
-            for seg in segments:
-                f.write(f"{seg['timestamp']} {seg['text']}\n")
-
-    # Done transcribing
-    state.set_transcribing(False)
-    await manager.broadcast({"type": "status", **state.get_status()})
-
-    return JSONResponse(content={
-        "status": "stopped",
-        "segments": len(segments),
-        "wav_path": os.path.basename(wav_path),
-        "transcript_path": os.path.basename(state.transcript_path),
-    })
+    except Exception as e:
+        print(f"Transcription error: {e}")
+        # Reset state on error
+        state.set_transcribing(False)
+        await manager.broadcast({"type": "status", **state.get_status()})
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Transcription failed: {str(e)}"}
+        )
 
 
 @app.get("/api/transcripts")
@@ -667,3 +746,210 @@ async def clear_chat() -> JSONResponse:
     """Clear chat history."""
     state.clear_chat_history()
     return JSONResponse(content={"status": "cleared"})
+
+
+# =============================================================================
+# Zoom Bot Integration (Docker-based Meeting SDK)
+# =============================================================================
+
+# Zoom bot state
+zoom_bot_state = {
+    "connected": False,
+    "meeting_number": None,
+    "audio_buffer": b"",
+    "total_audio_bytes": 0,
+}
+
+
+@app.websocket("/zoom-audio")
+async def zoom_audio_websocket(websocket: WebSocket) -> None:
+    """WebSocket endpoint for receiving audio from Zoom bot.
+
+    The Docker-based Zoom bot connects here to stream audio.
+    Audio is accumulated and can be transcribed when the meeting ends.
+    """
+    await websocket.accept()
+    print("Zoom bot connected")
+    zoom_bot_state["connected"] = True
+
+    # Create WAV file for this session
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    wav_path = os.path.join(OUTPUT_DIR, f"zoom_meeting_{timestamp}.wav")
+
+    # Open WAV file for writing
+    wav_file = wave.open(wav_path, "wb")
+    wav_file.setnchannels(1)  # Mono
+    wav_file.setsampwidth(2)  # 16-bit
+    wav_file.setframerate(16000)  # 16kHz
+
+    try:
+        while True:
+            message = await websocket.receive()
+
+            if message["type"] == "websocket.receive":
+                if "bytes" in message:
+                    # Binary audio data
+                    audio_data = message["bytes"]
+                    wav_file.writeframes(audio_data)
+                    zoom_bot_state["total_audio_bytes"] += len(audio_data)
+
+                elif "text" in message:
+                    # JSON control message
+                    try:
+                        data = json.loads(message["text"])
+                        msg_type = data.get("type", "")
+
+                        if msg_type == "bot_connected":
+                            print(f"Zoom bot connected: {data.get('bot_name', 'unknown')}")
+                            await manager.broadcast({
+                                "type": "zoom_bot_event",
+                                "event": "connected",
+                                "bot_name": data.get("bot_name", ""),
+                            })
+
+                        elif msg_type == "meeting_joined":
+                            zoom_bot_state["meeting_number"] = data.get("meeting_number")
+                            await manager.broadcast({
+                                "type": "zoom_bot_event",
+                                "event": "meeting_joined",
+                                "meeting_number": data.get("meeting_number"),
+                            })
+
+                        elif msg_type == "meeting_left":
+                            zoom_bot_state["meeting_number"] = None
+                            await manager.broadcast({
+                                "type": "zoom_bot_event",
+                                "event": "meeting_left",
+                            })
+
+                        elif msg_type == "keepalive":
+                            pass  # Just keep connection alive
+
+                    except json.JSONDecodeError:
+                        pass
+
+    except WebSocketDisconnect:
+        print("Zoom bot disconnected")
+    finally:
+        wav_file.close()
+        zoom_bot_state["connected"] = False
+
+        # If we have audio, transcribe it
+        if zoom_bot_state["total_audio_bytes"] > 32000:  # At least 1 second
+            print(f"Transcribing Zoom audio: {wav_path}")
+
+            # Transcribe the recorded audio
+            model = load_model()
+            segments = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: transcribe_wav_file(model, wav_path)
+            )
+
+            # Save transcript
+            if segments:
+                transcript_path = wav_path.replace(".wav", ".txt")
+                with open(transcript_path, "w", encoding="utf-8") as f:
+                    f.write(f"Zoom Meeting Transcript\n")
+                    f.write(f"Recorded: {timestamp}\n\n")
+                    for seg in segments:
+                        f.write(f"{seg['timestamp']} {seg['text']}\n")
+
+                print(f"Transcript saved: {transcript_path}")
+
+                # Broadcast completion
+                await manager.broadcast({
+                    "type": "zoom_bot_event",
+                    "event": "transcription_complete",
+                    "segments": len(segments),
+                    "transcript_path": os.path.basename(transcript_path),
+                })
+
+        zoom_bot_state["total_audio_bytes"] = 0
+
+
+@app.get("/api/zoom/bot-status")
+async def zoom_bot_status() -> dict[str, Any]:
+    """Get Zoom bot connection status."""
+    return {
+        "connected": zoom_bot_state["connected"],
+        "meeting_number": zoom_bot_state["meeting_number"],
+        "audio_received_bytes": zoom_bot_state["total_audio_bytes"],
+    }
+
+
+@app.post("/api/zoom/join")
+async def zoom_join_meeting(body: dict[str, Any]) -> JSONResponse:
+    """Send join command to Zoom bot.
+
+    Requires the bot to be running (docker-compose up).
+    """
+    import websockets as ws_client
+
+    meeting_number = body.get("meeting_number", "")
+    password = body.get("password", "")
+    display_name = body.get("display_name", "Transcription Bot")
+
+    if not meeting_number:
+        return JSONResponse(status_code=400, content={"error": "meeting_number required"})
+
+    try:
+        # Connect to the bot's command server
+        bot_url = os.getenv("ZOOM_BOT_URL", "ws://localhost:3001")
+        async with ws_client.connect(bot_url) as websocket:
+            # Send join command
+            await websocket.send(json.dumps({
+                "type": "join",
+                "meeting_number": meeting_number,
+                "password": password,
+                "display_name": display_name,
+            }))
+
+            # Wait for response
+            response = await asyncio.wait_for(websocket.recv(), timeout=30.0)
+            result = json.loads(response)
+
+            if result.get("success"):
+                return JSONResponse(content={
+                    "status": "joining",
+                    "meeting_number": meeting_number,
+                })
+            else:
+                return JSONResponse(status_code=500, content={
+                    "error": result.get("error", "Join failed"),
+                })
+
+    except asyncio.TimeoutError:
+        return JSONResponse(status_code=504, content={"error": "Bot response timeout"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={
+            "error": f"Failed to connect to bot: {e}. Is the bot running?",
+        })
+
+
+@app.post("/api/zoom/leave")
+async def zoom_leave_meeting() -> JSONResponse:
+    """Send leave command to Zoom bot."""
+    import websockets as ws_client
+
+    try:
+        bot_url = os.getenv("ZOOM_BOT_URL", "ws://localhost:3001")
+        async with ws_client.connect(bot_url) as websocket:
+            await websocket.send(json.dumps({"type": "leave"}))
+            response = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+            result = json.loads(response)
+
+            return JSONResponse(content={"status": "left" if result.get("success") else "failed"})
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    host = os.getenv("WEB_HOST", "127.0.0.1")
+    port = int(os.getenv("WEB_PORT", "8000"))
+    print(f"Starting server at http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port)
+
+

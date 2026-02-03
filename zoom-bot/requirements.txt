@@ -1,0 +1,14 @@
+# Zoom Meeting SDK for Python (Linux only)
+zoom-meeting-sdk==0.0.24
+
+# WebSocket server for audio streaming
+websockets>=12.0
+
+# Environment variable management
+python-dotenv>=1.0.0
+
+# Audio processing
+numpy>=1.24.0
+
+# Qt5 bindings - using SDK's bundled Qt via LD_PRELOAD
+PyQt5>=5.15.0

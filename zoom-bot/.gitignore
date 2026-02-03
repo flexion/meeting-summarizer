@@ -1,0 +1,13 @@
+# Zoom Meeting SDK binaries (download separately)
+*.so
+qt_libs/
+h/
+diagnostic/
+images/
+imjs/
+json/
+release_info/
+cpthost
+
+# Environment file with secrets
+.env

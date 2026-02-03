@@ -1,0 +1,16 @@
+services:
+  zoom-bot:
+    build: .
+    container_name: zoom-transcription-bot
+    env_file:
+      - .env
+    environment:
+      # Override transcriber URL to reach host machine
+      - TRANSCRIBER_WS_URL=ws://host.docker.internal:8000/zoom-audio
+    ports:
+      # Expose command port for controlling the bot
+      - "3001:3001"
+    restart: unless-stopped
+    # For macOS, enable host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

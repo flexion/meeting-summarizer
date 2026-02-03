@@ -231,6 +231,53 @@
             padding-top: 50px;
         }
 
+        /* Progress bar for transcription */
+        .progress-container {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .progress-container.active {
+            display: block;
+        }
+        .progress-label {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .progress-bar-container {
+            background: #0f3460;
+            border-radius: 4px;
+            height: 24px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4ecca3, #3db892);
+            width: 0%;
+            transition: width 0.3s ease-out;
+            border-radius: 4px;
+            position: relative;
+        }
+        .progress-bar.indeterminate {
+            width: 30%;
+            animation: indeterminate 1.5s infinite ease-in-out;
+        }
+        @keyframes indeterminate {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(400%); }
+        }
+        .progress-text {
+            font-size: 13px;
+            color: #4ecca3;
+            margin-top: 8px;
+            text-align: center;
+        }
+
         /* ===== CHAT TAB ===== */
         .chat-tab {
             display: flex;
@@ -493,6 +540,7 @@
             from { transform: translateX(100%); opacity: 0; }
             to { transform: translateX(0); opacity: 1; }
         }
+
     </style>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
@@ -527,6 +575,17 @@
                     </div>
                     <span id="elapsed-time"></span>
                 </div>
+            </div>
+
+            <div id="progress-container" class="progress-container">
+                <div class="progress-label">
+                    <span>Transcribing audio...</span>
+                    <span id="progress-percent">0%</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div id="progress-bar" class="progress-bar"></div>
+                </div>
+                <div id="progress-text" class="progress-text">Loading model...</div>
             </div>
 
             <div class="transcript-container">
@@ -591,6 +650,10 @@
         const loadBtn = document.getElementById('load-btn');
         const unloadBtn = document.getElementById('unload-btn');
         const loadedIndicator = document.getElementById('loaded-indicator');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress-bar');
+        const progressPercent = document.getElementById('progress-percent');
+        const progressText = document.getElementById('progress-text');
 
         let ws = null;
         let isRunning = false;
@@ -657,9 +720,9 @@
 
         function updateControlButton() {
             if (isTranscribing) {
-                controlBtn.textContent = 'Processing...';
+                controlBtn.textContent = 'Processing... (click to cancel)';
                 controlBtn.className = 'btn-stop';
-                controlBtn.disabled = true;
+                controlBtn.disabled = false;  // Allow clicking to reset
                 deviceSelect.disabled = true;
             } else if (isRunning) {
                 controlBtn.textContent = 'Stop';
@@ -700,17 +763,48 @@
         }
 
         async function stopTranscription() {
+            // Immediately update UI to show we're stopping
+            isRunning = false;
+            isTranscribing = true;
+            updateControlButton();
+            showProgress(true);  // Show progress bar with indeterminate state
+            clearTranscript();   // Clear transcript to show new segments as they arrive
+
             try {
                 // The status will be updated via WebSocket as transcription progresses
                 const response = await fetch('/api/stop', { method: 'POST' });
+                const data = await response.json();
+
                 if (!response.ok) {
-                    const data = await response.json();
                     showError(data.error || 'Failed to stop');
+                    // Reset state on error
+                    isTranscribing = false;
+                    updateControlButton();
+                    showProgress(false);
+                    showTranscriptMessage('Transcription failed. Select a device and try again.');
                 }
                 // Refresh transcript list after processing completes
                 fetchTranscripts();
             } catch (error) {
-                showError('Failed to stop recording');
+                showError('Failed to stop recording: ' + error.message);
+                // Reset state on error
+                isTranscribing = false;
+                updateControlButton();
+                showProgress(false);
+                showTranscriptMessage('Transcription failed. Select a device and try again.');
+            }
+        }
+
+        async function resetState() {
+            try {
+                await fetch('/api/reset', { method: 'POST' });
+                isRunning = false;
+                isTranscribing = false;
+                updateControlButton();
+                showProgress(false);
+                showTranscriptMessage('State reset. Select an audio device and click Start to begin recording.');
+            } catch (error) {
+                showError('Failed to reset');
             }
         }
 
@@ -747,6 +841,37 @@
         function updateLevel(value) {
             const percentage = Math.min((value / 8000) * 100, 100);
             levelBar.style.width = `${percentage}%`;
+        }
+
+        function showProgress(show) {
+            if (show) {
+                progressContainer.classList.add('active');
+                progressBar.classList.add('indeterminate');
+                progressBar.style.width = '30%';
+                progressPercent.textContent = '0%';
+                progressText.textContent = 'Loading model...';
+            } else {
+                progressContainer.classList.remove('active');
+                progressBar.classList.remove('indeterminate');
+            }
+        }
+
+        function updateProgress(progress, processedSeconds, totalSeconds) {
+            progressBar.classList.remove('indeterminate');
+            const percent = Math.round(progress * 100);
+            progressBar.style.width = `${percent}%`;
+            progressPercent.textContent = `${percent}%`;
+
+            // Format times
+            const processedStr = formatTime(Math.round(processedSeconds));
+            const totalStr = formatTime(Math.round(totalSeconds));
+            progressText.textContent = `Processed ${processedStr} of ${totalStr}`;
+        }
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${mins}:${String(secs).padStart(2, '0')}`;
         }
 
         function updateStatus(status) {
@@ -857,8 +982,15 @@
                     case 'transcript':
                         addTranscriptSegment(data.timestamp, data.text);
                         break;
+                    case 'transcription_progress':
+                        updateProgress(data.progress, data.processed_seconds, data.total_seconds);
+                        break;
                     case 'status':
                         updateStatus(data);
+                        // Hide progress bar when no longer transcribing
+                        if (!data.transcribing) {
+                            showProgress(false);
+                        }
                         break;
                     case 'pong':
                         break;
@@ -885,7 +1017,10 @@
         deviceSelect.addEventListener('change', updateControlButton);
 
         controlBtn.addEventListener('click', () => {
-            if (isRunning) {
+            if (isTranscribing) {
+                // Allow canceling/resetting stuck state
+                resetState();
+            } else if (isRunning) {
                 stopTranscription();
             } else {
                 startTranscription();
@@ -1044,10 +1179,17 @@
                 if (!response.ok) {
                     const data = await response.json();
                     showError(data.error || 'Failed to load transcript');
+                    loadBtn.textContent = 'Load';
+                    loadBtn.disabled = !transcriptSelect.value;
                     return;
                 }
 
                 const data = await response.json();
+
+                // Update local state immediately (WebSocket will also update, but this ensures consistency)
+                hasTranscript = true;
+                loadedFile = filename;
+
                 chatMessages.innerHTML = `
                     <div class="chat-empty">
                         <h2>Transcript loaded</h2>
@@ -1055,11 +1197,12 @@
                     </div>
                 `;
 
+                updateTranscriptSelector();
+
             } catch (error) {
                 showError('Failed to load transcript');
-            } finally {
                 loadBtn.textContent = 'Load';
-                updateTranscriptSelector();
+                loadBtn.disabled = !transcriptSelect.value;
             }
         }
 
@@ -1085,10 +1228,23 @@
         loadBtn.addEventListener('click', loadTranscript);
         unloadBtn.addEventListener('click', unloadTranscript);
 
+        // Fetch current status from server
+        async function fetchStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const status = await response.json();
+                updateStatus(status);
+            } catch (error) {
+                console.error('Failed to fetch status:', error);
+            }
+        }
+
         // Initialize
         fetchDevices();
         fetchTranscripts();
+        fetchStatus();  // Get current status in case server has state from previous session
         connectWebSocket();
+
     </script>
 </body>
 </html>
