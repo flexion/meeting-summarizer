@@ -10,7 +10,7 @@ from playwright_bot.exceptions import (
     BreakoutRoomsNotAvailableError,
 )
 from playwright_bot.page_objects.base_page import BasePage
-from playwright_bot.selectors import BreakoutRoomSelectors
+from playwright_bot.zoom_selectors import BreakoutRoomSelectors
 
 logger = logging.getLogger(__name__)
 

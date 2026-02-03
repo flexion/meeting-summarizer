@@ -6,7 +6,7 @@ import logging
 from enum import Enum
 
 from playwright_bot.page_objects.base_page import BasePage
-from playwright_bot.selectors import ErrorSelectors, MeetingSelectors
+from playwright_bot.zoom_selectors import ErrorSelectors, MeetingSelectors
 
 logger = logging.getLogger(__name__)
 

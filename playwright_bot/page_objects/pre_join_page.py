@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from playwright_bot.page_objects.base_page import BasePage
-from playwright_bot.selectors import PreJoinSelectors
+from playwright_bot.zoom_selectors import PreJoinSelectors
 
 logger = logging.getLogger(__name__)
 

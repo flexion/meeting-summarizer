@@ -6,7 +6,7 @@ import logging
 import time
 
 from playwright_bot.page_objects.base_page import BasePage
-from playwright_bot.selectors import MeetingSelectors, WaitingRoomSelectors
+from playwright_bot.zoom_selectors import MeetingSelectors, WaitingRoomSelectors
 
 logger = logging.getLogger(__name__)
 
