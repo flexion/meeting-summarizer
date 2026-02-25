@@ -24,6 +24,8 @@ class PreJoinSelectors:
             'input[id="inputname"]',
             'input[placeholder*="name" i]',
             'input[aria-label*="name" i]',
+            # Generic text input near "Your Name" or "Name" label
+            'input[type="text"]',
         ]
     )
 
@@ -43,6 +45,7 @@ class PreJoinSelectors:
             'button[aria-label*="mute" i][aria-label*="audio" i]',
             'button[aria-label*="audio" i]',
             '[data-testid="preview-audio-control"]',
+            'button:has-text("Mute")',
         ]
     )
 
@@ -52,6 +55,8 @@ class PreJoinSelectors:
             'button[aria-label*="video" i]',
             'button[aria-label*="camera" i]',
             '[data-testid="preview-video-control"]',
+            'button:has-text("Start Video")',
+            'button:has-text("Stop Video")',
         ]
     )
 
@@ -77,12 +82,16 @@ class PreJoinSelectors:
     )
 
     # Pre-join container (to verify we're on the right page)
+    # Look for page content that indicates pre-join screen
     PRE_JOIN_CONTAINER = ", ".join(
         [
             "#webclient",
             ".preview-container",
             '[class*="preview"]',
             "#wc-container-left",
+            # Text-based detection for "Enter Meeting Info" screen
+            ':has-text("Enter Meeting Info")',
+            ':has-text("Your Name")',
         ]
     )
 

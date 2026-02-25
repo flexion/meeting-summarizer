@@ -221,7 +221,7 @@ Implementation:
 - Audio captured via `ScriptProcessorNode`, base64 encoded, sent to Python via `page.expose_function()`
 - `AudioProcessor` converts 48kHz stereo float32 → 16kHz mono int16 using scipy
 - WAV files written incrementally for crash safety
-- Test script: `python playwright_bot/test_audio.py <url> --headed --duration 30`
+- Test script: `python playwright_bot/test_audio.py <url> --headed` (runs until Ctrl+C)
 - Added `run-audio-test` Makefile target and `scipy>=1.10.0` dependency
 
 ### Phase 4: Polish ✅ COMPLETE
@@ -468,17 +468,17 @@ WAV File (16kHz, mono, 16-bit PCM)
 
 **Usage:**
 ```bash
-# Basic audio capture test (30 seconds, headless)
+# Basic audio capture test (runs until Ctrl+C)
 make run-audio-test URL="https://zoom.us/j/123456789"
 
-# Headed mode with custom duration
+# Headed mode with specific duration (60 seconds)
 make run-audio-test URL="https://zoom.us/j/123456789" HEADED=1 DURATION=60
 
-# Test with transcription
-python playwright_bot/test_audio.py "https://zoom.us/j/123" --headed --duration 30 --transcribe
+# Test with transcription (runs until Ctrl+C)
+python playwright_bot/test_audio.py "https://zoom.us/j/123" --headed --transcribe
 
-# Test in breakout room
-python playwright_bot/test_audio.py "https://zoom.us/j/123" --room "Room 1" --duration 60
+# Test in breakout room (runs until Ctrl+C)
+python playwright_bot/test_audio.py "https://zoom.us/j/123" --room "Room 1"
 ```
 
 ### Phase 4: Polish ✅
@@ -527,8 +527,8 @@ IN_BREAKOUT_ROOM + RETURNED_TO_MAIN → IN_MEETING
 The meeting monitor starts automatically after successfully joining a meeting. No additional configuration needed.
 
 ```bash
-# Test with headed mode - observe behavior when host ends meeting
-python playwright_bot/test_audio.py "https://zoom.us/j/123" --headed --duration 120
+# Test with headed mode - observe behavior when host ends meeting (runs until Ctrl+C or meeting ends)
+python playwright_bot/test_audio.py "https://zoom.us/j/123" --headed
 
 # Bot will:
 # 1. Join meeting

@@ -15,21 +15,24 @@ import signal
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from queue import Queue, Empty
-from typing import Any, Callable
+from queue import Empty, Queue
+from typing import Any
 
 import websockets
-from dotenv import load_dotenv
-
-# Qt5 for event loop (using SDK's bundled Qt via LD_PRELOAD)
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import QTimer, QObject, pyqtSignal as Signal, pyqtSlot as Slot
 
 # Import Zoom SDK
 import zoom_meeting_sdk as zoom
+from dotenv import load_dotenv
+from PyQt5.QtCore import QObject, QTimer
+from PyQt5.QtCore import pyqtSignal as Signal
+from PyQt5.QtCore import pyqtSlot as Slot
+
+# Qt5 for event loop (using SDK's bundled Qt via LD_PRELOAD)
+from PyQt5.QtWidgets import QApplication
 
 # Load environment variables
 load_dotenv()
@@ -637,7 +640,7 @@ def main() -> None:
                     print(f"[MeetingPoll] Status: {status}")
                     last_status[0] = status
                     bot_controller._on_meeting_status(status, 0)
-            except Exception as e:
+            except Exception:
                 pass  # Service might not be ready yet
 
     meeting_poll_timer = QTimer()

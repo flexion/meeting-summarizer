@@ -11,8 +11,10 @@ import json
 import os
 import signal
 import sys
+import types
 import wave
 from datetime import datetime
+from typing import Any, cast
 
 import boto3
 import numpy as np
@@ -43,14 +45,14 @@ FORMAT = pyaudio.paInt16  # 16-bit audio
 running = True
 
 
-def signal_handler(sig, frame):
+def signal_handler(sig: int, frame: types.FrameType | None) -> None:
     """Handle Ctrl+C for graceful shutdown."""
     global running
     print("\n\n🛑 Stopping transcription...")
     running = False
 
 
-def create_transcript_file():
+def create_transcript_file() -> str:
     """Create a new transcript file with timestamp in filename."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -77,7 +79,7 @@ def create_wav_file() -> tuple[str, wave.Wave_write]:
     return filepath, wf
 
 
-def format_elapsed_time(start_time):
+def format_elapsed_time(start_time: datetime) -> str:
     """Format elapsed time as [HH:MM:SS]."""
     elapsed = datetime.now() - start_time
     total_seconds = int(elapsed.total_seconds())
@@ -86,7 +88,7 @@ def format_elapsed_time(start_time):
     return f"[{hours:02d}:{minutes:02d}:{seconds:02d}]"
 
 
-def format_duration(start_time, end_time):
+def format_duration(start_time: datetime, end_time: datetime) -> str:
     """Format duration as H:MM:SS."""
     elapsed = end_time - start_time
     total_seconds = int(elapsed.total_seconds())
@@ -130,7 +132,7 @@ Transcript:
         )
 
         result = json.loads(response["body"].read())
-        return result["content"][0]["text"]
+        return cast(str, result["content"][0]["text"])
 
     except Exception as e:
         print(f"\n⚠️  Summarization error: {e}")
@@ -139,7 +141,7 @@ Transcript:
         return None
 
 
-def list_audio_devices():
+def list_audio_devices() -> list[dict[str, Any]]:
     """List all available audio devices and return device info."""
     p = pyaudio.PyAudio()
     devices = []
@@ -166,7 +168,7 @@ def list_audio_devices():
     return devices
 
 
-def select_input_device(devices):
+def select_input_device(devices: list[dict[str, Any]]) -> int:
     """Prompt user to select an input device."""
     # Try to auto-select BlackHole device
     blackhole_devices = [
@@ -187,12 +189,12 @@ def select_input_device(devices):
     # Manual selection
     while True:
         try:
-            device_idx = input("\n🔢 Enter device number: ").strip()
-            device_idx = int(device_idx)
+            device_input = input("\n🔢 Enter device number: ").strip()
+            device_num = int(device_input)
 
-            if 0 <= device_idx < len(devices):
-                if devices[device_idx]["maxInputChannels"] > 0:
-                    return device_idx
+            if 0 <= device_num < len(devices):
+                if devices[device_num]["maxInputChannels"] > 0:
+                    return device_num
                 else:
                     print("❌ This device has no input channels. Please select another.")
             else:
@@ -204,7 +206,7 @@ def select_input_device(devices):
             sys.exit(0)
 
 
-def load_whisper_model():
+def load_whisper_model() -> WhisperModel:
     """Load the Whisper model."""
     print(f"\n📥 Loading Whisper model: {WHISPER_MODEL}")
     print(f"   Device: {DEVICE}")
@@ -224,7 +226,9 @@ def load_whisper_model():
         sys.exit(1)
 
 
-def transcribe_audio_buffer(model, audio_data, sample_rate):
+def transcribe_audio_buffer(
+    model: WhisperModel, audio_data: np.ndarray[Any, Any], sample_rate: int
+) -> str | None:
     """Transcribe an audio buffer using Whisper."""
     try:
         # Whisper expects audio as float32 normalized to [-1, 1]
@@ -271,7 +275,9 @@ def transcribe_wav_file(model: WhisperModel, wav_path: str) -> str | None:
             beam_size=5,
         )
 
-        print(f"   Detected language: {info.language} (probability: {info.language_probability:.2f})")
+        print(
+            f"   Detected language: {info.language} (probability: {info.language_probability:.2f})"
+        )
         print("   Transcribing...")
 
         # Collect all segments with their timestamps
@@ -298,7 +304,7 @@ def transcribe_wav_file(model: WhisperModel, wav_path: str) -> str | None:
         return None
 
 
-def main():
+def main() -> None:
     """Main function to run live transcription."""
     global running
 
@@ -693,7 +699,7 @@ def transcribe_existing_audio(filepath: str) -> None:
         sys.exit(1)
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Audio recording and transcription with meeting summarization",

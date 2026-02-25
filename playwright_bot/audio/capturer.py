@@ -200,37 +200,87 @@ AUDIO_CAPTURE_JS = """
 
     // Hook RTCPeerConnection to intercept WebRTC streams (for Zoom)
     if (window.RTCPeerConnection) {
-        const originalAddTrack = RTCPeerConnection.prototype.addTrack;
-        RTCPeerConnection.prototype.addTrack = function(track, ...streams) {
-            console.log('[AudioCapture] RTCPeerConnection.addTrack called:', track.kind);
-            return originalAddTrack.apply(this, [track, ...streams]);
-        };
+        // Track all peer connections for later audio capture
+        const peerConnections = new Set();
 
-        const originalOnTrack = Object.getOwnPropertyDescriptor(RTCPeerConnection.prototype, 'ontrack');
-        Object.defineProperty(RTCPeerConnection.prototype, 'ontrack', {
-            set: function(handler) {
-                const wrappedHandler = function(event) {
-                    console.log('[AudioCapture] RTCPeerConnection ontrack event:', event.track.kind);
-                    if (state.capturing && event.track.kind === 'audio') {
-                        // Capture the stream containing this audio track
-                        if (event.streams && event.streams.length > 0) {
-                            captureMediaStream(event.streams[0]);
+        // Hook the constructor to track all peer connections
+        const OriginalRTCPeerConnection = window.RTCPeerConnection;
+        window.RTCPeerConnection = function(...args) {
+            const pc = new OriginalRTCPeerConnection(...args);
+            peerConnections.add(pc);
+            console.log('[AudioCapture] New RTCPeerConnection created, total:', peerConnections.size);
+
+            // Hook addEventListener on this instance
+            const originalAddEventListener = pc.addEventListener.bind(pc);
+            pc.addEventListener = function(type, listener, options) {
+                if (type === 'track') {
+                    const wrappedListener = function(event) {
+                        console.log('[AudioCapture] RTCPeerConnection track event (addEventListener):', event.track.kind);
+                        if (event.track.kind === 'audio') {
+                            console.log('[AudioCapture] Audio track detected, streams:', event.streams.length);
+                            if (event.streams && event.streams.length > 0) {
+                                // Always try to capture, even if not "capturing" yet
+                                // The captureMediaStream function checks state.capturing
+                                setTimeout(() => {
+                                    if (state.capturing) {
+                                        captureMediaStream(event.streams[0]);
+                                    } else {
+                                        // Store for later capture
+                                        if (!state.pendingStreams) state.pendingStreams = [];
+                                        state.pendingStreams.push(event.streams[0]);
+                                        console.log('[AudioCapture] Stored stream for later capture');
+                                    }
+                                }, 100);
+                            }
                         }
-                    }
-                    if (handler) {
-                        return handler.call(this, event);
-                    }
-                };
-                if (originalOnTrack && originalOnTrack.set) {
-                    originalOnTrack.set.call(this, wrappedHandler);
+                        return listener.call(this, event);
+                    };
+                    return originalAddEventListener(type, wrappedListener, options);
                 }
-            },
-            get: function() {
-                if (originalOnTrack && originalOnTrack.get) {
-                    return originalOnTrack.get.call(this);
-                }
-            }
+                return originalAddEventListener(type, listener, options);
+            };
+
+            return pc;
+        };
+        // Copy static properties
+        window.RTCPeerConnection.prototype = OriginalRTCPeerConnection.prototype;
+        Object.keys(OriginalRTCPeerConnection).forEach(key => {
+            window.RTCPeerConnection[key] = OriginalRTCPeerConnection[key];
         });
+
+        // Also hook the ontrack setter for completeness
+        const originalOnTrack = Object.getOwnPropertyDescriptor(OriginalRTCPeerConnection.prototype, 'ontrack');
+        if (originalOnTrack) {
+            Object.defineProperty(OriginalRTCPeerConnection.prototype, 'ontrack', {
+                set: function(handler) {
+                    const wrappedHandler = function(event) {
+                        console.log('[AudioCapture] RTCPeerConnection ontrack event (setter):', event.track.kind);
+                        if (event.track.kind === 'audio' && event.streams && event.streams.length > 0) {
+                            if (state.capturing) {
+                                captureMediaStream(event.streams[0]);
+                            } else if (!state.pendingStreams) {
+                                state.pendingStreams = [];
+                                state.pendingStreams.push(event.streams[0]);
+                            }
+                        }
+                        if (handler) {
+                            return handler.call(this, event);
+                        }
+                    };
+                    if (originalOnTrack.set) {
+                        originalOnTrack.set.call(this, wrappedHandler);
+                    }
+                },
+                get: function() {
+                    if (originalOnTrack.get) {
+                        return originalOnTrack.get.call(this);
+                    }
+                }
+            });
+        }
+
+        // Store reference for debugging
+        state.peerConnections = peerConnections;
     }
 
     // Expose functions to control capture
@@ -244,11 +294,27 @@ AUDIO_CAPTURE_JS = """
             state.audioContext.resume();
         }
 
+        // Capture any pending streams that were detected before capture started
+        if (state.pendingStreams && state.pendingStreams.length > 0) {
+            console.log('[AudioCapture] Capturing', state.pendingStreams.length, 'pending stream(s)');
+            for (const stream of state.pendingStreams) {
+                captureMediaStream(stream);
+            }
+            state.pendingStreams = [];
+        }
+
         // Scan for existing media elements and capture them
         document.querySelectorAll('audio, video').forEach(el => {
             if (!el.paused) {
                 captureMediaElement(el);
             }
+        });
+
+        // Log current state for debugging
+        console.log('[AudioCapture] State after start:', {
+            capturing: state.capturing,
+            processorCount: state.processors.length,
+            peerConnectionCount: state.peerConnections ? state.peerConnections.size : 0
         });
 
         return true;
@@ -361,6 +427,36 @@ class AudioCapturer:
 
         except Exception as e:
             logger.error(f"Error receiving audio data: {e}")
+
+    def add_init_script(self) -> bool:
+        """Add init script to hook WebRTC BEFORE any page JavaScript runs.
+
+        This MUST be called before navigating to the page. It uses Playwright's
+        add_init_script to inject our hooks before Zoom's code runs.
+
+        Returns:
+            True if script was added successfully
+        """
+        try:
+            # Add the audio capture script as an init script
+            # This runs before any page JavaScript
+            self._page.add_init_script(AUDIO_CAPTURE_JS)
+            logger.info("Added audio capture init script (will run before page JS)")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to add init script: {e}")
+            return False
+
+    def initialize_early(self) -> bool:
+        """Initialize audio capture hooks early (before joining meeting).
+
+        This should be called after navigation but before clicking join
+        to ensure WebRTC streams are captured as they're created.
+
+        Returns:
+            True if initialization was successful
+        """
+        return self._initialize()
 
     def _initialize(self) -> bool:
         """Initialize audio capture by injecting JavaScript.

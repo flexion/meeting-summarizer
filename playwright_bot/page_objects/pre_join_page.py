@@ -27,6 +27,8 @@ class PreJoinPage(BasePage):
             True if pre-join screen is visible
         """
         timeout = timeout_ms or self.timeout_ms
+
+        # Try to find pre-join container first
         try:
             self.page.wait_for_selector(
                 PreJoinSelectors.PRE_JOIN_CONTAINER,
@@ -35,9 +37,34 @@ class PreJoinPage(BasePage):
             )
             # Also check for the name input as a secondary confirmation
             name_input = self.page.query_selector(PreJoinSelectors.NAME_INPUT)
-            return name_input is not None
+            if name_input is not None:
+                return True
         except Exception:
-            return False
+            pass
+
+        # Fallback: look for Join button directly (indicates pre-join screen)
+        try:
+            join_button = self.page.wait_for_selector(
+                PreJoinSelectors.JOIN_BUTTON,
+                timeout=min(timeout, 5000),
+                state="visible",
+            )
+            if join_button:
+                logger.debug("Pre-join detected via Join button")
+                return True
+        except Exception:
+            pass
+
+        # Fallback: check page content for pre-join indicators
+        try:
+            page_content = self.page.content().lower()
+            if "your name" in page_content and "join" in page_content:
+                logger.debug("Pre-join detected via page content")
+                return True
+        except Exception:
+            pass
+
+        return False
 
     def enter_name(self, name: str) -> None:
         """Enter the display name in the name input field.

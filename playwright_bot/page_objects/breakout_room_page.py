@@ -363,9 +363,7 @@ class BreakoutRoomPage(BasePage):
             True if breakout room closing warning is displayed
         """
         try:
-            closing_element = self.page.query_selector(
-                BreakoutRoomSelectors.BREAKOUT_CLOSING_SOON
-            )
+            closing_element = self.page.query_selector(BreakoutRoomSelectors.BREAKOUT_CLOSING_SOON)
             if closing_element and closing_element.is_visible():
                 logger.debug("Breakout room closing soon indicator detected")
                 return True
@@ -403,9 +401,7 @@ class BreakoutRoomPage(BasePage):
         """
         # If we see the "Leave Room" button, we're still in breakout
         try:
-            leave_room_button = self.page.query_selector(
-                BreakoutRoomSelectors.LEAVE_ROOM_BUTTON
-            )
+            leave_room_button = self.page.query_selector(BreakoutRoomSelectors.LEAVE_ROOM_BUTTON)
             if leave_room_button and leave_room_button.is_visible():
                 return False
         except Exception:
@@ -413,9 +409,7 @@ class BreakoutRoomPage(BasePage):
 
         # Check if breakout room indicator is gone
         try:
-            indicator = self.page.query_selector(
-                BreakoutRoomSelectors.IN_BREAKOUT_INDICATOR
-            )
+            indicator = self.page.query_selector(BreakoutRoomSelectors.IN_BREAKOUT_INDICATOR)
             if indicator and indicator.is_visible():
                 return False
         except Exception:

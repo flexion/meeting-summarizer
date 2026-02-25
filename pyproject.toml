@@ -37,6 +37,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+exclude = ["zoom-bot"]
 
 [tool.ruff.lint]
 select = [
@@ -73,6 +74,24 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
 strict_equality = true
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--cov=transcribe_live --cov=web_app --cov=playwright_bot --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["transcribe_live", "web_app", "playwright_bot"]
+omit = ["playwright_bot/test_*.py"]
+
+[tool.coverage.report]
+fail_under = 20
+show_missing = true
+exclude_lines = [
+    "if __name__ == .__main__.",
+    "pragma: no cover",
+]
 
 [[tool.mypy.overrides]]
 module = [

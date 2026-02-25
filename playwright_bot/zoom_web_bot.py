@@ -94,6 +94,7 @@ class BotConfig:
     screenshot_on_error: bool = field(default_factory=lambda: PLAYWRIGHT_SCREENSHOTS)
     enable_audio_capture: bool = True
     audio_output_dir: str = field(default_factory=lambda: OUTPUT_DIR)
+    handle_signals: bool = False  # Let caller handle SIGINT/SIGTERM
 
 
 class ZoomWebBot:
@@ -186,16 +187,26 @@ class ZoomWebBot:
             True if successfully joined the meeting, False otherwise
         """
         try:
-            # Setup signal handlers for graceful shutdown
-            self._setup_signal_handlers()
+            # Setup signal handlers for graceful shutdown (if enabled)
+            if self.config.handle_signals:
+                self._setup_signal_handlers()
 
             # Launch browser
             self._update_state(BotState.LAUNCHING)
             self._launch_browser()
 
+            # If audio capture is enabled, add init script BEFORE navigating
+            # This ensures WebRTC hooks are in place before Zoom's JS runs
+            if self.config.enable_audio_capture:
+                self._add_audio_init_script()
+
             # Navigate to meeting
             self._update_state(BotState.NAVIGATING)
             self._navigate_to_meeting()
+
+            # Initialize audio capture (expose Python callback, verify hooks)
+            if self.config.enable_audio_capture:
+                self._initialize_audio_capture()
 
             # Handle pre-join screen
             self._update_state(BotState.PRE_JOIN)
@@ -255,7 +266,10 @@ class ZoomWebBot:
 
         try:
             # Try to leave meeting gracefully (only if still in meeting)
-            if self._meeting_page and self._state in (BotState.IN_MEETING, BotState.IN_BREAKOUT_ROOM):
+            if self._meeting_page and self._state in (
+                BotState.IN_MEETING,
+                BotState.IN_BREAKOUT_ROOM,
+            ):
                 self._meeting_page.leave_meeting()
         except Exception as e:
             logger.warning(f"Error leaving meeting: {e}")
@@ -344,6 +358,12 @@ class ZoomWebBot:
 
     def _close_browser(self) -> None:
         """Close the browser and cleanup Playwright resources."""
+        # Temporarily suppress asyncio pipe warnings during browser close
+        # These are harmless warnings from Playwright's internal pipes being closed
+        asyncio_logger = logging.getLogger("asyncio")
+        original_level = asyncio_logger.level
+        asyncio_logger.setLevel(logging.ERROR)
+
         try:
             if self._page:
                 self._page.close()
@@ -360,6 +380,8 @@ class ZoomWebBot:
             self._context = None
             self._browser = None
             self._playwright = None
+            # Restore asyncio logger level
+            asyncio_logger.setLevel(original_level)
 
     def _navigate_to_meeting(self) -> None:
         """Navigate to the Zoom meeting URL."""
@@ -506,7 +528,19 @@ class ZoomWebBot:
     # -------------------------------------------------------------------------
 
     def _start_meeting_monitor(self) -> None:
-        """Start the background meeting monitor."""
+        """Start the background meeting monitor.
+
+        NOTE: Currently disabled due to threading issues with Playwright.
+        Playwright's sync API cannot be called from multiple threads.
+        TODO: Reimplement using async Playwright or main-thread polling.
+        """
+        # Disabled due to Playwright threading issues
+        # The monitor tries to call Playwright from a background thread,
+        # which causes greenlet errors.
+        logger.debug("Meeting monitor disabled (Playwright threading limitation)")
+        return
+
+        # Original implementation (disabled):
         if not self._meeting_page or not self._breakout_room_page:
             logger.warning("Cannot start monitor - page objects not initialized")
             return
@@ -765,6 +799,61 @@ class ZoomWebBot:
         if self._audio_processor and self._audio_processor.is_processing:
             self._audio_processor.process(audio_bytes, sample_rate, channels)
 
+    def _add_audio_init_script(self) -> bool:
+        """Add audio capture init script BEFORE navigation.
+
+        This must be called before navigating to the page. It uses Playwright's
+        add_init_script to inject WebRTC hooks before Zoom's JavaScript runs.
+
+        Returns:
+            True if init script was added successfully
+        """
+        if not self._page:
+            logger.warning("Cannot add audio init script - page not initialized")
+            return False
+
+        try:
+            # Create capturer and add init script
+            self._audio_capturer = AudioCapturer(
+                page=self._page,
+                on_audio_data=self._on_audio_data,
+            )
+            if self._audio_capturer.add_init_script():
+                logger.info("Audio capture init script added (pre-navigation)")
+                return True
+            else:
+                logger.warning("Failed to add audio capture init script")
+                self._audio_capturer = None
+                return False
+        except Exception as e:
+            logger.warning(f"Error adding audio init script: {e}")
+            self._audio_capturer = None
+            return False
+
+    def _initialize_audio_capture(self) -> bool:
+        """Initialize audio capture after navigation.
+
+        This exposes the Python callback function to JavaScript and verifies
+        the hooks are working. Should be called after navigation completes.
+
+        Returns:
+            True if initialization was successful
+        """
+        if not self._audio_capturer:
+            logger.warning("Audio capturer not created - skipping initialization")
+            return False
+
+        try:
+            if self._audio_capturer.initialize_early():
+                logger.info("Audio capture initialized (post-navigation)")
+                return True
+            else:
+                logger.warning("Failed to initialize audio capture")
+                return False
+        except Exception as e:
+            logger.warning(f"Error initializing audio capture: {e}")
+            return False
+
     def start_audio_capture(self) -> bool:
         """Start capturing audio from the meeting.
 
@@ -799,11 +888,12 @@ class ZoomWebBot:
             wav_path = self._audio_processor.start()
             logger.info(f"Audio will be saved to: {wav_path}")
 
-            # Initialize and start audio capturer
-            self._audio_capturer = AudioCapturer(
-                page=self._page,
-                on_audio_data=self._on_audio_data,
-            )
+            # Initialize audio capturer if not already done (hooks may have been injected early)
+            if not self._audio_capturer:
+                self._audio_capturer = AudioCapturer(
+                    page=self._page,
+                    on_audio_data=self._on_audio_data,
+                )
 
             if self._audio_capturer.start():
                 self._recording = True

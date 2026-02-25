@@ -2,20 +2,20 @@
 """Test script for audio capture in Zoom meetings.
 
 This script tests the audio capture functionality by joining a Zoom meeting,
-capturing audio for a specified duration, and optionally transcribing it.
+capturing audio until stopped, and optionally transcribing it.
 
 Usage:
-    # Basic test (30 seconds, headless)
+    # Basic test (indefinite, until Ctrl+C)
     python playwright_bot/test_audio.py "https://zoom.us/j/123456789"
 
-    # Headed mode with longer duration
+    # Headed mode with specific duration
     python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --headed --duration 60
 
     # Test with breakout room
-    python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --room "Room 1" --duration 60
+    python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --room "Room 1"
 
     # Test and transcribe the recording
-    python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --headed --duration 30 --transcribe
+    python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --headed --transcribe
 """
 
 from __future__ import annotations
@@ -88,7 +88,9 @@ def transcribe_wav_file(wav_path: str) -> str | None:
             beam_size=5,
         )
 
-        print(f"   Detected language: {info.language} (probability: {info.language_probability:.2f})")
+        print(
+            f"   Detected language: {info.language} (probability: {info.language_probability:.2f})"
+        )
 
         # Collect segments with timestamps
         transcript_lines = []
@@ -136,8 +138,8 @@ def main() -> None:
     parser.add_argument(
         "--duration",
         type=int,
-        default=30,
-        help="Recording duration in seconds (default: 30)",
+        default=None,
+        help="Recording duration in seconds (default: indefinite, until Ctrl+C)",
     )
     parser.add_argument("--room", default="", help="Breakout room to join")
     parser.add_argument(
@@ -160,7 +162,10 @@ def main() -> None:
     print(f"\n   Meeting URL: {args.meeting_url}")
     print(f"   Bot Name: {args.name}")
     print(f"   Headless: {not args.headed}")
-    print(f"   Duration: {args.duration}s")
+    if args.duration:
+        print(f"   Duration: {args.duration}s")
+    else:
+        print("   Duration: Indefinite (Ctrl+C to stop)")
     print(f"   Output Dir: {args.output_dir}")
     if args.room:
         print(f"   Target Room: {args.room}")
@@ -217,25 +222,42 @@ def main() -> None:
 
         wav_path = bot.get_recording_path()
         print(f"   Recording to: {wav_path}")
-        print(f"   Duration: {args.duration}s")
-        print("   Press Ctrl+C to stop early")
+        if args.duration:
+            print(f"   Duration: {args.duration}s")
+            print("   Press Ctrl+C to stop early")
+        else:
+            print("   Duration: Indefinite")
+            print("   Press Ctrl+C to stop")
         print()
         print("=" * 60)
 
-        # Record for specified duration
+        # Record until stopped or duration reached
         start_time = time.time()
-        while running and (time.time() - start_time) < args.duration:
-            # Show progress
+        while running:
             elapsed = time.time() - start_time
-            duration = bot.get_recording_duration()
-            remaining = args.duration - elapsed
 
-            print(
-                f"\r   Recording: {format_duration(duration)} "
-                f"| Remaining: {format_duration(remaining)}   ",
-                end="",
-                flush=True,
-            )
+            # Check duration limit if specified
+            if args.duration and elapsed >= args.duration:
+                break
+
+            # Show progress
+            duration = bot.get_recording_duration()
+
+            if args.duration:
+                remaining = args.duration - elapsed
+                print(
+                    f"\r   Recording: {format_duration(duration)} "
+                    f"| Remaining: {format_duration(remaining)}   ",
+                    end="",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"\r   Recording: {format_duration(duration)} "
+                    f"| Elapsed: {format_duration(elapsed)}   ",
+                    end="",
+                    flush=True,
+                )
 
             time.sleep(0.5)
 

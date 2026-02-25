@@ -102,7 +102,8 @@ make type-check         # mypy transcribe_live.py
 
 # Zoom Bot
 make install-playwright # Install Playwright browser
-make run-audio-test URL="https://zoom.us/j/123" HEADED=1 DURATION=60
+make run-audio-test URL="https://zoom.us/j/123" HEADED=1  # Runs until Ctrl+C
+make run-audio-test URL="https://zoom.us/j/123" HEADED=1 DURATION=60  # Runs for 60s
 make run-breakout-test URL="https://zoom.us/j/123" ROOM="Room 1"
 ```
 
@@ -125,14 +126,17 @@ python transcribe_live.py --chat transcripts/transcript_*.txt
 ### Zoom Bot Commands
 
 ```bash
-# Join meeting and capture audio (headed mode for testing)
+# Join meeting and capture audio (runs until Ctrl+C)
+python playwright_bot/test_audio.py "https://zoom.us/j/123" --headed
+
+# Join meeting with specific duration (60 seconds)
 python playwright_bot/test_audio.py "https://zoom.us/j/123" --headed --duration 60
 
 # Join meeting headless with transcription
-python playwright_bot/test_audio.py "https://zoom.us/j/123" --duration 60 --transcribe
+python playwright_bot/test_audio.py "https://zoom.us/j/123" --transcribe
 
 # Join specific breakout room
-python playwright_bot/test_audio.py "https://zoom.us/j/123" --room "Room 1" --duration 60
+python playwright_bot/test_audio.py "https://zoom.us/j/123" --room "Room 1"
 
 # List available breakout rooms
 python playwright_bot/test_breakout.py "https://zoom.us/j/123" --list-only

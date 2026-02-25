@@ -183,8 +183,49 @@ class MeetingPage(BasePage):
             if error_container and error_container.is_visible():
                 text = error_container.inner_text()
                 if text and len(text) > 5:
-                    logger.warning(f"Error detected: {text}")
-                    return text
+                    # Filter out known non-error UI notifications
+                    non_error_phrases = [
+                        "video now started",
+                        "video started",
+                        "video now stopped",
+                        "video stopped",
+                        "audio muted",
+                        "muted",
+                        "unmuted",
+                        "start video",
+                        "stop video",
+                        "recording",
+                        "you are muted",
+                        # Host/participant notifications
+                        "is the host now",
+                        "has joined",
+                        "has left",
+                        "is sharing",
+                        "stopped sharing",
+                        # Feature notifications
+                        "floating reactions",
+                        "reactions have",
+                        "new animation",
+                        "one place for all",
+                        "meeting chats",
+                        "breakout room",
+                        "waiting room",
+                        # Settings/tips
+                        "better meeting experience",
+                        "hardware acceleration",
+                        "learn more",
+                        "enable the option",
+                        # Generic UI
+                        "ok",
+                        "got it",
+                        "dismiss",
+                        "close",
+                        "new",
+                    ]
+                    text_lower = text.lower()
+                    if not any(phrase in text_lower for phrase in non_error_phrases):
+                        logger.warning(f"Error detected: {text}")
+                        return text
         except Exception:
             pass
 
@@ -271,12 +312,7 @@ class MeetingPage(BasePage):
         timeout_seconds = timeout_ms / 1000
 
         while (time.time() - start_time) < timeout_seconds:
-            # Check for errors first
-            error = self.check_for_error()
-            if error:
-                return False
-
-            # Check if we're in meeting and UI is stable
+            # Check if we're in meeting first (prioritize positive detection)
             if self.is_in_meeting(timeout_ms=2000):
                 # Brief pause to let UI settle
                 time.sleep(1)
@@ -285,6 +321,13 @@ class MeetingPage(BasePage):
                 if self.is_in_meeting(timeout_ms=2000):
                     logger.info("Meeting UI stabilized")
                     return True
+
+            # Only check for critical errors if not in meeting
+            # (notifications can appear while in meeting and shouldn't fail us)
+            status, detail = self.get_meeting_status()
+            if status in (MeetingStatus.ENDED, MeetingStatus.REMOVED):
+                logger.warning(f"Meeting ended/removed: {detail}")
+                return False
 
             time.sleep(0.5)
 

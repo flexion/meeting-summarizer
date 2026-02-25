@@ -1,4 +1,4 @@
-.PHONY: help setup install install-dev install-playwright check-system-deps run run-web run-playwright-test run-breakout-test run-audio-test lint format type-check clean
+.PHONY: help setup install install-dev install-playwright check-system-deps run run-web run-playwright-test run-breakout-test run-audio-test lint format type-check test audit clean
 
 help:
 	@echo "Live Audio Transcription - Development Commands"
@@ -16,6 +16,8 @@ help:
 	@echo "make lint              - Run linter"
 	@echo "make format            - Format code"
 	@echo "make type-check        - Run type checker"
+	@echo "make test              - Run tests with coverage (ARGS='-v' for verbose)"
+	@echo "make audit             - Check dependencies for known vulnerabilities"
 	@echo "make clean             - Clean up generated files"
 
 setup:
@@ -38,8 +40,10 @@ install:
 
 install-dev:
 	python3 -m pip install -r requirements-dev.txt
+	pre-commit install
 	@echo ""
 	@echo "Development dependencies installed!"
+	@echo "Pre-commit hooks installed!"
 
 install-playwright:
 	playwright install chromium
@@ -85,13 +89,21 @@ endif
 
 run-audio-test:
 ifndef URL
-	@echo "Usage: make run-audio-test URL=https://zoom.us/j/123456789 [DURATION=30] [HEADED=1]"
+	@echo "Usage: make run-audio-test URL=https://zoom.us/j/123456789 [DURATION=60] [HEADED=1]"
 	@exit 1
 endif
 ifdef HEADED
-	python3 playwright_bot/test_audio.py "$(URL)" --headed --duration $(or $(DURATION),30)
+ifdef DURATION
+	python3 playwright_bot/test_audio.py "$(URL)" --headed --duration $(DURATION)
 else
-	python3 playwright_bot/test_audio.py "$(URL)" --duration $(or $(DURATION),30)
+	python3 playwright_bot/test_audio.py "$(URL)" --headed
+endif
+else
+ifdef DURATION
+	python3 playwright_bot/test_audio.py "$(URL)" --duration $(DURATION)
+else
+	python3 playwright_bot/test_audio.py "$(URL)"
+endif
 endif
 
 lint:
@@ -103,6 +115,12 @@ format:
 
 type-check:
 	python3 -m mypy transcribe_live.py
+
+test:
+	python3 -m pytest $(ARGS)
+
+audit:
+	pip-audit
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

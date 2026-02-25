@@ -155,14 +155,14 @@ make install-playwright
 Join a meeting and capture audio:
 
 ```bash
-# Join meeting (headed mode for testing)
+# Join meeting (headed mode, runs until Ctrl+C)
+python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --headed
+
+# Join meeting with specific duration (60 seconds)
 python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --headed --duration 60
 
-# Join meeting (headless)
-python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --duration 120
-
 # With transcription after recording
-python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --duration 60 --transcribe
+python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --transcribe
 ```
 
 ### Breakout Room Support
@@ -170,8 +170,8 @@ python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --duration 60 
 Join a specific breakout room (requires "Allow participants to choose room" enabled by host):
 
 ```bash
-# Join meeting, wait for breakout rooms, then join "Room 1"
-python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --room "Room 1" --duration 60
+# Join meeting, wait for breakout rooms, then join "Room 1" (runs until Ctrl+C)
+python playwright_bot/test_audio.py "https://zoom.us/j/123456789" --room "Room 1"
 
 # List available breakout rooms only
 python playwright_bot/test_breakout.py "https://zoom.us/j/123456789" --list-only
@@ -180,10 +180,13 @@ python playwright_bot/test_breakout.py "https://zoom.us/j/123456789" --list-only
 ### Using Makefile
 
 ```bash
-# Basic audio capture test
+# Audio capture test (runs until Ctrl+C)
 make run-audio-test URL="https://zoom.us/j/123456789"
 
-# With headed mode and custom duration
+# With headed mode
+make run-audio-test URL="https://zoom.us/j/123456789" HEADED=1
+
+# With specific duration (60 seconds)
 make run-audio-test URL="https://zoom.us/j/123456789" HEADED=1 DURATION=60
 
 # Breakout room test
