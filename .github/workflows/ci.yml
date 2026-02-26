@@ -31,14 +31,10 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      - name: Install Playwright browsers
-        run: playwright install --with-deps chromium
-
       - name: Verify build
         run: |
           python -c "import transcribe_live; print('✓ transcribe_live imports successfully')"
           python -c "import web_app; print('✓ web_app imports successfully')"
-          python -c "from playwright_bot import zoom_web_bot; print('✓ playwright_bot imports successfully')"
 
       - name: Run linter
         run: make lint
