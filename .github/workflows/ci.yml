@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main, thursday-session-1]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev ffmpeg
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Install Playwright browsers
+        run: playwright install --with-deps chromium
+
+      - name: Verify build
+        run: |
+          python -c "import transcribe_live; print('✓ transcribe_live imports successfully')"
+          python -c "import web_app; print('✓ web_app imports successfully')"
+          python -c "from playwright_bot import zoom_web_bot; print('✓ playwright_bot imports successfully')"
+
+      - name: Run linter
+        run: make lint
+
+      - name: Run type checker
+        run: make type-check
