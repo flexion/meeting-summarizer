@@ -81,19 +81,21 @@ Zoom WebRTC (48kHz stereo) → ScriptProcessorNode → Base64 → Python
 
 ## Development Commands
 
+This project uses [uv](https://docs.astral.sh/uv/) for package management. Install uv first: `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+
 ```bash
 # Setup
-make setup              # Create venv
-source venv/bin/activate
-make install            # Install dependencies
-make install-dev        # Install dev dependencies (ruff, mypy)
+make setup              # Create .venv with uv
+source .venv/bin/activate
+make install            # Install production dependencies (uv sync --no-group dev)
+make install-dev        # Install all dependencies including dev (uv sync + pre-commit install)
 
 # System dependencies (macOS)
 brew install ffmpeg portaudio blackhole-2ch
 
 # Run
-make run                # CLI: python transcribe_live.py
-make run-web            # Web: uvicorn web_app:app --reload
+make run                # CLI: uv run python transcribe_live.py
+make run-web            # Web: uv run python -m uvicorn web_app:app --reload
 
 # Code quality
 make format             # ruff format + ruff check --fix
@@ -111,38 +113,38 @@ make run-breakout-test URL="https://zoom.us/j/123" ROOM="Room 1"
 
 ```bash
 # Record and transcribe (default)
-python transcribe_live.py
+uv run python transcribe_live.py
 
 # Transcribe existing audio file
-python transcribe_live.py --transcribe-audio path/to/audio.wav
+uv run python transcribe_live.py --transcribe-audio path/to/audio.wav
 
 # Summarize existing transcript
-python transcribe_live.py --summarize transcripts/transcript_*.txt
+uv run python transcribe_live.py --summarize transcripts/transcript_*.txt
 
 # Interactive chat with transcript
-python transcribe_live.py --chat transcripts/transcript_*.txt
+uv run python transcribe_live.py --chat transcripts/transcript_*.txt
 ```
 
 ### Zoom Bot Commands
 
 ```bash
 # Join meeting and capture audio (runs until Ctrl+C)
-python playwright_bot/test_audio.py "https://zoom.us/j/123" --headed
+uv run python playwright_bot/test_audio.py "https://zoom.us/j/123" --headed
 
 # Join meeting with specific duration (60 seconds)
-python playwright_bot/test_audio.py "https://zoom.us/j/123" --headed --duration 60
+uv run python playwright_bot/test_audio.py "https://zoom.us/j/123" --headed --duration 60
 
 # Join meeting headless with transcription
-python playwright_bot/test_audio.py "https://zoom.us/j/123" --transcribe
+uv run python playwright_bot/test_audio.py "https://zoom.us/j/123" --transcribe
 
 # Join specific breakout room
-python playwright_bot/test_audio.py "https://zoom.us/j/123" --room "Room 1"
+uv run python playwright_bot/test_audio.py "https://zoom.us/j/123" --room "Room 1"
 
 # List available breakout rooms
-python playwright_bot/test_breakout.py "https://zoom.us/j/123" --list-only
+uv run python playwright_bot/test_breakout.py "https://zoom.us/j/123" --list-only
 
 # Test meeting join only (no audio)
-python playwright_bot/test_join.py "https://zoom.us/j/123" --headed
+uv run python playwright_bot/test_join.py "https://zoom.us/j/123" --headed
 ```
 
 ## Configuration

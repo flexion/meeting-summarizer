@@ -5,7 +5,7 @@ help:
 	@echo ""
 	@echo "make setup             - Create virtual environment"
 	@echo "make install           - Install production dependencies"
-	@echo "make install-dev       - Install development dependencies"
+	@echo "make install-dev       - Install all dependencies (including dev)"
 	@echo "make install-playwright - Install Playwright browsers"
 	@echo "make check-system-deps - Check for required system dependencies"
 	@echo "make run               - Run the transcription script (CLI)"
@@ -21,32 +21,32 @@ help:
 	@echo "make clean             - Clean up generated files"
 
 setup:
-	python3 -m venv venv
+	uv venv
 	@echo ""
 	@echo "Virtual environment created. Activate it with:"
-	@echo "  source venv/bin/activate"
+	@echo "  source .venv/bin/activate"
 	@echo ""
 	@echo "Then install dependencies:"
 	@echo "  make install"
 
 install:
-	python3 -m pip install -r requirements.txt
+	uv sync --no-group dev
 	@echo ""
 	@echo "Dependencies installed!"
 	@echo ""
 	@echo "Next steps:"
 	@echo "  1. Check system dependencies: make check-system-deps"
-	@echo "  2. Run the script: make run (or python transcribe_live.py)"
+	@echo "  2. Run the script: make run (or uv run python transcribe_live.py)"
 
 install-dev:
-	python3 -m pip install -r requirements-dev.txt
+	uv sync
 	pre-commit install
 	@echo ""
 	@echo "Development dependencies installed!"
 	@echo "Pre-commit hooks installed!"
 
 install-playwright:
-	playwright install chromium
+	uv run playwright install chromium
 	@echo ""
 	@echo "Playwright Chromium browser installed!"
 	@echo "Test with: make run-playwright-test URL=https://zoom.us/j/123456789"
@@ -64,17 +64,17 @@ check-system-deps:
 	@echo "All dependencies installed? Run: make run"
 
 run:
-	python3 transcribe_live.py
+	uv run python transcribe_live.py
 
 run-web:
-	python3 -m uvicorn web_app:app --reload --host 127.0.0.1 --port 8000
+	uv run python -m uvicorn web_app:app --reload --host 127.0.0.1 --port 8000
 
 run-playwright-test:
 ifndef URL
 	@echo "Usage: make run-playwright-test URL=https://zoom.us/j/123456789"
 	@exit 1
 endif
-	python3 playwright_bot/test_join.py "$(URL)"
+	uv run python playwright_bot/test_join.py "$(URL)"
 
 run-breakout-test:
 ifndef URL
@@ -85,7 +85,7 @@ ifndef ROOM
 	@echo "Usage: make run-breakout-test URL=https://zoom.us/j/123456789 ROOM='Room 1'"
 	@exit 1
 endif
-	python3 playwright_bot/test_breakout.py "$(URL)" --room "$(ROOM)"
+	uv run python playwright_bot/test_breakout.py "$(URL)" --room "$(ROOM)"
 
 run-audio-test:
 ifndef URL
@@ -94,33 +94,33 @@ ifndef URL
 endif
 ifdef HEADED
 ifdef DURATION
-	python3 playwright_bot/test_audio.py "$(URL)" --headed --duration $(DURATION)
+	uv run python playwright_bot/test_audio.py "$(URL)" --headed --duration $(DURATION)
 else
-	python3 playwright_bot/test_audio.py "$(URL)" --headed
+	uv run python playwright_bot/test_audio.py "$(URL)" --headed
 endif
 else
 ifdef DURATION
-	python3 playwright_bot/test_audio.py "$(URL)" --duration $(DURATION)
+	uv run python playwright_bot/test_audio.py "$(URL)" --duration $(DURATION)
 else
-	python3 playwright_bot/test_audio.py "$(URL)"
+	uv run python playwright_bot/test_audio.py "$(URL)"
 endif
 endif
 
 lint:
-	python3 -m ruff check .
+	uv run ruff check .
 
 format:
-	python3 -m ruff format .
-	python3 -m ruff check --fix .
+	uv run ruff format .
+	uv run ruff check --fix .
 
 type-check:
-	python3 -m mypy transcribe_live.py
+	uv run mypy transcribe_live.py
 
 test:
-	python3 -m pytest $(ARGS)
+	uv run pytest $(ARGS)
 
 audit:
-	pip-audit
+	uv run pip-audit
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

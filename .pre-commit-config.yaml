@@ -17,4 +17,4 @@ repos:
     rev: v2.10.0
     hooks:
       - id: pip-audit
-        args: [-r, requirements.txt, -r, requirements-dev.txt]
+        args: [.]
