@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Live Audio Transcription with Meeting Summarization - a Python application for real-time audio transcription using faster-whisper with AWS Bedrock integration for AI-powered summarization and chat. Supports CLI, web interfaces, and a headless Zoom bot for automatic meeting transcription.
 
+## Test
+
+Just a change to test
+
 ## Architecture
 
 Three main entry points:
@@ -15,9 +19,11 @@ Three main entry points:
 - **playwright_bot/** - Headless Zoom bot for automatic meeting transcription
 
 CLI and web app share the same core workflow:
+
 1. Audio capture via PyAudio → WAV recording → faster-whisper transcription → AWS Bedrock summarization/chat
 
 Zoom bot workflow:
+
 1. Playwright browser → Zoom web client → Web Audio API capture → WAV recording → faster-whisper transcription
 
 ### Data Flow
@@ -65,6 +71,7 @@ playwright_bot/
 ```
 
 **Bot State Machine:**
+
 ```
 IDLE → LAUNCHING → NAVIGATING → PRE_JOIN → JOINING → WAITING_ROOM → IN_MEETING
                                                                     ↓
@@ -74,6 +81,7 @@ IDLE → LAUNCHING → NAVIGATING → PRE_JOIN → JOINING → WAITING_ROOM → 
 ```
 
 **Audio Capture Flow:**
+
 ```
 Zoom WebRTC (48kHz stereo) → ScriptProcessorNode → Base64 → Python
     → scipy resample (16kHz mono) → WAV file
@@ -166,6 +174,7 @@ Environment variables via `.env` file:
 ## Key Implementation Details
 
 ### Audio Settings (both scripts)
+
 ```python
 RATE = 16000      # Whisper expects 16kHz
 CHANNELS = 1      # Mono
@@ -174,17 +183,20 @@ FORMAT = pyaudio.paInt16
 ```
 
 ### Thread Safety (web_app.py)
+
 - `TranscriptionState` uses `threading.Lock` for all state mutations
 - Audio capture runs in background thread; WebSocket broadcast in async task
 - Queue-based communication between threads
 
 ### Transcription Workflow
+
 1. Record to WAV file incrementally (crash-safe)
 2. After recording stops, transcribe full WAV file
 3. faster-whisper handles long files with internal VAD filtering
 4. Timestamps formatted as `[MM:SS]` or `[HH:MM:SS]`
 
 ### AWS Bedrock Integration
+
 - Uses Claude via `boto3.client("bedrock-runtime")`
 - Requires AWS credentials (`~/.aws/credentials` or environment variables)
 - Chat maintains conversation history for multi-turn dialogue
@@ -192,5 +204,6 @@ FORMAT = pyaudio.paInt16
 ## File Outputs
 
 All outputs saved to `transcripts/` directory:
+
 - `recording_YYYY-MM-DD_HH-MM-SS.wav` - Audio recording
 - `transcript_YYYY-MM-DD_HH-MM-SS.txt` - Timestamped transcript with metadata and summary
