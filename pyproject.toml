@@ -43,6 +43,9 @@ dev = [
     "pip-audit>=2.7.0",
 ]
 
+[tool.setuptools.packages.find]
+exclude = ["static*", "tests*"]
+
 # Ruff configuration
 [tool.ruff]
 line-length = 100
