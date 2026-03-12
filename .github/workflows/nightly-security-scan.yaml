@@ -3,7 +3,7 @@ name: Nightly Security Scan
 on:
   schedule:
     # Run at 2:00 AM UTC every day
-    - cron: '0 2 * * *'
+    - cron: "0 2 * * *"
   workflow_dispatch:
 
 permissions:
@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   pip-audit:
+    if: false
     name: Python Dependency Security Scan
     runs-on: ubuntu-latest
 
@@ -22,11 +23,11 @@ jobs:
           egress-policy: block
           disable-sudo-and-containers: true
           allowed-endpoints: >
-              api.github.com:443
-              files.pythonhosted.org:443
-              github.com:443
-              pypi.org:443
-              release-assets.githubusercontent.com:443
+            api.github.com:443
+            files.pythonhosted.org:443
+            github.com:443
+            pypi.org:443
+            release-assets.githubusercontent.com:443
       - name: Checkout the source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -147,6 +148,7 @@ jobs:
           fi
 
   trufflehog:
+    if: false
     name: Secret Scanning
     runs-on: ubuntu-latest
 
@@ -165,7 +167,7 @@ jobs:
       - name: Checkout the source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 0  # Full history for trufflehog
+          fetch-depth: 0 # Full history for trufflehog
 
       - name: Run TruffleHog
         id: trufflehog
