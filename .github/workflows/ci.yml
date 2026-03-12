@@ -30,6 +30,9 @@ jobs:
       - name: Install Python dependencies
         run: uv sync
 
+      - name: Install Playwright browsers
+        run: uv run playwright install chromium --with-deps
+
       - name: Verify build
         run: |
           uv run python -c "import transcribe_live; print('✓ transcribe_live imports successfully')"
@@ -44,6 +47,9 @@ jobs:
         with:
           file: ./coverage.xml
           fail_ci_if_error: false
+
+      - name: Run pre-commit hooks
+        run: uv run pre-commit run --all-files
 
       - name: Run linter
         run: make lint
