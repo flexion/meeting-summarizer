@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, ensembling-session-2]
+    branches: [main]
   pull_request:
-    branches: [main, ensembling-session-2]
+    branches: [main]
 permissions:
   contents: read
 jobs:
