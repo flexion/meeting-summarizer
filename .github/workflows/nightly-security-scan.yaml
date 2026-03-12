@@ -1,0 +1,281 @@
+name: Nightly Security Scan
+
+on:
+  schedule:
+    # Run at 2:00 AM UTC every day
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  pip-audit:
+    name: Python Dependency Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
+        with:
+          egress-policy: block
+          disable-sudo-and-containers: true
+          allowed-endpoints: >
+              api.github.com:443
+              files.pythonhosted.org:443
+              github.com:443
+              pypi.org:443
+              release-assets.githubusercontent.com:443
+      - name: Checkout the source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@eac588ad8def6316056a12d4907a9d4d84ff7a3b # v7.3.0
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+
+      - name: Install Python Version From uv
+        run: |
+          uv python install
+
+      - name: Install dependencies
+        run: |
+          uv sync --group dev
+
+      - name: Run pip-audit
+        id: pip-audit
+        continue-on-error: true
+        run: |
+          echo "Running pip-audit..."
+          uv run pip-audit --format json --output pip-audit-results.json
+          AUDIT_EXIT_CODE=$?
+          echo "exit_code=${AUDIT_EXIT_CODE}" >> "$GITHUB_OUTPUT"
+
+          if [ $AUDIT_EXIT_CODE -ne 0 ]; then
+            echo "vulnerabilities_found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "vulnerabilities_found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate pip-audit report
+        if: steps.pip-audit.outputs.vulnerabilities_found == 'true'
+        run: |
+          # Generate human-readable report
+          uv run pip-audit --format markdown > pip-audit-report.md || true
+
+          # Also get text format for issue body
+          uv run pip-audit > pip-audit-report.txt || true
+
+      - name: Create issue for pip-audit findings
+        if: steps.pip-audit.outputs.vulnerabilities_found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Read the audit report
+          REPORT_CONTENT=$(cat pip-audit-report.txt || echo "See workflow logs for details")
+
+          # Create a unique title with date
+          ISSUE_TITLE="🔒 Security Alert: Vulnerable Python Dependencies ($(date +%Y-%m-%d))"
+
+          # Check if a similar open issue already exists
+          EXISTING_ISSUE=$(gh issue list \
+            --label "security" \
+            --search "Security Alert: Vulnerable Python Dependencies in:title" \
+            --state open \
+            --json number \
+            --jq '.[0].number' || echo "")
+
+          if [ -n "$EXISTING_ISSUE" ]; then
+            echo "Found existing open issue #${EXISTING_ISSUE}, updating it..."
+            gh issue comment "$EXISTING_ISSUE" --body "## 🔄 Updated Scan Results ($(date +%Y-%m-%d))
+
+          \`\`\`
+          ${REPORT_CONTENT}
+          \`\`\`
+
+          **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            echo "Creating new issue..."
+            gh issue create \
+              --title "$ISSUE_TITLE" \
+              --label "security" \
+              --body "## 🔒 pip-audit found vulnerable dependencies
+
+          **Scan Date:** $(date +%Y-%m-%d)
+          **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          ### Vulnerabilities Found
+
+          \`\`\`
+          ${REPORT_CONTENT}
+          \`\`\`
+
+          ### Action Required
+
+          Please review and update the affected dependencies to secure versions.
+
+          ### Additional Information
+
+          - Review the full workflow logs for more details
+          - Check the [pip-audit documentation](https://github.com/pypa/pip-audit) for remediation guidance
+          - This issue was automatically created by the nightly security scan workflow"
+          fi
+
+      - name: Upload pip-audit artifacts
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: pip-audit-results
+          path: |
+            pip-audit-results.json
+            pip-audit-report.md
+            pip-audit-report.txt
+          if-no-files-found: ignore
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### 🔒 pip-audit Security Scan Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${{ steps.pip-audit.outputs.vulnerabilities_found }}" == "true" ]; then
+            echo "- ❌ **pip-audit**: Vulnerabilities detected" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- ✅ **pip-audit**: No vulnerabilities found" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  trufflehog:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
+        with:
+          egress-policy: block
+          disable-sudo: true
+          allowed-endpoints: >
+            api.github.com:443
+            ghcr.io:443
+            github.com:443
+            pkg-containers.githubusercontent.com:443
+
+      - name: Checkout the source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0  # Full history for trufflehog
+
+      - name: Run TruffleHog
+        id: trufflehog
+        run: |
+          # Run TruffleHog in a container and capture exit code
+          # Exit codes: 0=no findings, 183=findings detected, 1=error
+          set +e  # Don't exit on error
+
+          docker run --rm -v "$PWD:/tmp" -w /tmp \
+            ghcr.io/trufflesecurity/trufflehog:v3.90.13 \
+            git file:///tmp/ \
+            --branch ${{ github.ref_name }} \
+            --fail \
+            --no-update \
+            --github-actions \
+            --results=verified \
+            --json > trufflehog-output.json
+
+          TRUFFLEHOG_EXIT_CODE=$?
+          echo "exit_code=${TRUFFLEHOG_EXIT_CODE}" >> "$GITHUB_OUTPUT"
+
+          # Exit code 183 means secrets were found
+          if [ $TRUFFLEHOG_EXIT_CODE -eq 183 ]; then
+            echo "secrets_found=true" >> "$GITHUB_OUTPUT"
+            exit 0  # Don't fail the workflow
+          elif [ $TRUFFLEHOG_EXIT_CODE -eq 0 ]; then
+            echo "secrets_found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          else
+            # Exit code 1 or other - this is an error, not a finding
+            echo "secrets_found=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::TruffleHog exited with code ${TRUFFLEHOG_EXIT_CODE}, which may indicate an error rather than findings"
+            exit 0  # Don't fail the workflow
+          fi
+
+      - name: Check TruffleHog results
+        id: check-results
+        run: |
+          # The trufflehog step already determined if secrets were found
+          # This step exists for backward compatibility with the workflow structure
+          echo "secrets_found=${{ steps.trufflehog.outputs.secrets_found }}" >> "$GITHUB_OUTPUT"
+
+      - name: Create issue for TruffleHog findings
+        if: steps.check-results.outputs.secrets_found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Create a unique title with date
+          ISSUE_TITLE="🔐 Security Alert: Secrets Detected in Repository ($(date +%Y-%m-%d))"
+
+          # Check if a similar open issue already exists
+          EXISTING_ISSUE=$(gh issue list \
+            --label "security" \
+            --search "Security Alert: Secrets Detected in:title" \
+            --state open \
+            --json number \
+            --jq '.[0].number' || echo "")
+
+          if [ -n "$EXISTING_ISSUE" ]; then
+            echo "Found existing open issue #${EXISTING_ISSUE}, updating it..."
+            gh issue comment "$EXISTING_ISSUE" --body "## 🔄 Updated Scan Results ($(date +%Y-%m-%d))
+
+          TruffleHog detected secrets in the repository.
+
+          **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          ⚠️ **CRITICAL:** Review the workflow logs immediately. Do not post secret details in this public issue."
+          else
+            echo "Creating new issue..."
+            gh issue create \
+              --title "$ISSUE_TITLE" \
+              --label "security" \
+              --body "## 🔐 TruffleHog detected secrets in the repository
+
+          **Scan Date:** $(date +%Y-%m-%d)
+          **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          ### ⚠️ CRITICAL SECURITY ISSUE
+
+          TruffleHog has detected potential secrets committed to the repository.
+
+          ### Immediate Actions Required
+
+          1. **DO NOT post secret details in this public issue**
+          2. Review the workflow logs (link above) to identify the secrets
+          3. Rotate/invalidate any exposed credentials immediately
+          4. Remove secrets from git history using tools like [git-filter-repo](https://github.com/newren/git-filter-repo) or [BFG Repo-Cleaner](https://rtyley.github.io/bfg-repo-cleaner/)
+          5. Ensure secrets are added to \`.gitignore\` or use environment variables
+          6. Consider using secrets management tools (AWS Secrets Manager, HashiCorp Vault, etc.)
+
+          ### Additional Information
+
+          - Review the [TruffleHog documentation](https://github.com/trufflesecurity/trufflehog) for remediation guidance
+          - Check the repository's \`.trivyignore\` and similar configs if false positives exist
+          - This issue was automatically created by the nightly security scan workflow
+
+          ### Resources
+
+          - [GitHub: Removing sensitive data](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository)
+          - [OWASP: Secrets Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html)"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### 🔒 TruffleHog Security Scan Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${{ steps.check-results.outputs.secrets_found }}" == "true" ]; then
+            echo "- ❌ **TruffleHog**: Secrets detected" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- ✅ **TruffleHog**: No secrets found" >> "$GITHUB_STEP_SUMMARY"
+          fi
