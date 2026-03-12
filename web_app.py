@@ -29,6 +29,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from faster_whisper import WhisperModel
 
+from playwright_bot.zoom_web_bot import BotConfig, BotState, ZoomWebBot
+
 # Load environment variables
 load_dotenv()
 
@@ -218,9 +220,77 @@ class ConnectionManager:
         self.active_connections -= disconnected
 
 
+_INACTIVE_BOT_STATES = {BotState.IDLE, BotState.MEETING_ENDED, BotState.ERROR, BotState.CLOSING}
+
+
+class PlaywrightBotManager:
+    """Manages the Playwright-based Zoom bot lifecycle."""
+
+    def __init__(self) -> None:
+        self._bot: ZoomWebBot | None = None
+        self._lock = asyncio.Lock()
+
+    def is_active(self) -> bool:
+        """True when bot exists and state is not terminal."""
+        return self._bot is not None and self._bot.state not in _INACTIVE_BOT_STATES
+
+    def get_status(self) -> dict[str, Any]:
+        """Return current bot status dict."""
+        if self._bot is None:
+            return {
+                "bot_state": BotState.IDLE.value,
+                "is_recording": False,
+                "recording_duration": 0.0,
+                "error_message": None,
+            }
+        return {
+            "bot_state": self._bot.state.value,
+            "is_recording": self._bot.is_recording(),
+            "recording_duration": self._bot.get_recording_duration(),
+            "error_message": self._bot.error_message,
+        }
+
+    async def start_bot(self, config: BotConfig) -> bool:
+        """Start the bot in a thread executor. Returns True if join succeeded."""
+        async with self._lock:
+            if self._bot is not None and self._bot.state not in _INACTIVE_BOT_STATES:
+                return False
+            self._bot = ZoomWebBot(config)
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self._bot.start)
+
+    async def stop_bot(self) -> tuple[str, float] | None:
+        """Stop audio capture, stop bot, return (wav_path, duration) or None."""
+        async with self._lock:
+            if self._bot is None:
+                return None
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, self._bot.stop_audio_capture)
+            await loop.run_in_executor(None, self._bot.stop)
+            self._bot = None
+            return result
+
+    async def get_breakout_rooms(self) -> list[str]:
+        """List available breakout rooms."""
+        async with self._lock:
+            if self._bot is None:
+                return []
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self._bot.get_available_breakout_rooms)
+
+    async def join_breakout_room(self, room_name: str) -> bool:
+        """Join a breakout room by name."""
+        async with self._lock:
+            if self._bot is None:
+                return False
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self._bot.join_breakout_room, room_name)
+
+
 # Global state
 state = TranscriptionState()
 manager = ConnectionManager()
+bot_manager = PlaywrightBotManager()
 level_queue: Queue[float] = Queue()
 transcript_queue: Queue[dict[str, Any]] = Queue()
 
@@ -365,6 +435,8 @@ def audio_worker(device_idx: int) -> None:
 async def broadcast_worker() -> None:
     """Async worker to broadcast queue contents to WebSocket clients."""
     loop = asyncio.get_event_loop()
+    bot_status_interval = 0.5  # 500ms
+    last_bot_status_time = 0.0
 
     while True:
         # Check level queue
@@ -381,6 +453,12 @@ async def broadcast_worker() -> None:
         except Empty:
             pass
 
+        # Broadcast bot status periodically
+        now = time.time()
+        if now - last_bot_status_time >= bot_status_interval and bot_manager.is_active():
+            await manager.broadcast({"type": "zoom_bot_status", **bot_manager.get_status()})
+            last_bot_status_time = now
+
         await asyncio.sleep(0.05)  # 50ms polling interval
 
 
@@ -394,6 +472,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     task.cancel()
     if state.is_running():
         state.stop_recording()
+    if bot_manager.is_active():
+        await bot_manager.stop_bot()
 
 
 app = FastAPI(title="Live Transcription", lifespan=lifespan)
@@ -751,222 +831,186 @@ async def clear_chat() -> JSONResponse:
 
 
 # =============================================================================
-# Zoom Bot Integration (Docker-based Meeting SDK)
+# Zoom Bot Integration (Playwright-based)
 # =============================================================================
 
-# Zoom bot state
-zoom_bot_state = {
-    "connected": False,
-    "meeting_number": None,
-    "audio_buffer": b"",
-    "total_audio_bytes": 0,
-}
 
-
-@app.websocket("/zoom-audio")
-async def zoom_audio_websocket(websocket: WebSocket) -> None:
-    """WebSocket endpoint for receiving audio from Zoom bot.
-
-    The Docker-based Zoom bot connects here to stream audio.
-    Audio is accumulated and can be transcribed when the meeting ends.
-    """
-    await websocket.accept()
-    print("Zoom bot connected")
-    zoom_bot_state["connected"] = True
-
-    # Create WAV file for this session
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    wav_path = os.path.join(OUTPUT_DIR, f"zoom_meeting_{timestamp}.wav")
-
-    # Open WAV file for writing
-    wav_file = wave.open(wav_path, "wb")
-    wav_file.setnchannels(1)  # Mono
-    wav_file.setsampwidth(2)  # 16-bit
-    wav_file.setframerate(16000)  # 16kHz
-
+async def _run_zoom_bot(config: BotConfig) -> None:
+    """Background task: start bot, join meeting, begin audio capture."""
     try:
-        while True:
-            message = await websocket.receive()
-
-            if message["type"] == "websocket.receive":
-                if "bytes" in message:
-                    # Binary audio data
-                    audio_data = message["bytes"]
-                    wav_file.writeframes(audio_data)
-                    zoom_bot_state["total_audio_bytes"] += len(audio_data)
-
-                elif "text" in message:
-                    # JSON control message
-                    try:
-                        data = json.loads(message["text"])
-                        msg_type = data.get("type", "")
-
-                        if msg_type == "bot_connected":
-                            print(f"Zoom bot connected: {data.get('bot_name', 'unknown')}")
-                            await manager.broadcast(
-                                {
-                                    "type": "zoom_bot_event",
-                                    "event": "connected",
-                                    "bot_name": data.get("bot_name", ""),
-                                }
-                            )
-
-                        elif msg_type == "meeting_joined":
-                            zoom_bot_state["meeting_number"] = data.get("meeting_number")
-                            await manager.broadcast(
-                                {
-                                    "type": "zoom_bot_event",
-                                    "event": "meeting_joined",
-                                    "meeting_number": data.get("meeting_number"),
-                                }
-                            )
-
-                        elif msg_type == "meeting_left":
-                            zoom_bot_state["meeting_number"] = None
-                            await manager.broadcast(
-                                {
-                                    "type": "zoom_bot_event",
-                                    "event": "meeting_left",
-                                }
-                            )
-
-                        elif msg_type == "keepalive":
-                            pass  # Just keep connection alive
-
-                    except json.JSONDecodeError:
-                        pass
-
-    except WebSocketDisconnect:
-        print("Zoom bot disconnected")
-    finally:
-        wav_file.close()
-        zoom_bot_state["connected"] = False
-
-        # If we have audio, transcribe it
-        if zoom_bot_state["total_audio_bytes"] > 32000:  # At least 1 second
-            print(f"Transcribing Zoom audio: {wav_path}")
-
-            # Transcribe the recorded audio
-            model = load_model()
-            audio_duration = zoom_bot_state["total_audio_bytes"] / (2 * 16000)
-            progress_queue: Queue[dict[str, Any]] = Queue()
-            segments = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: transcribe_wav_file_streaming(
-                    model, wav_path, audio_duration, progress_queue
-                ),
+        joined = await bot_manager.start_bot(config)
+        if not joined:
+            status = bot_manager.get_status()
+            await manager.broadcast(
+                {
+                    "type": "zoom_bot_status",
+                    **status,
+                }
             )
+            return
 
-            # Save transcript
-            if segments:
-                transcript_path = wav_path.replace(".wav", ".txt")
-                with open(transcript_path, "w", encoding="utf-8") as f:
-                    f.write("Zoom Meeting Transcript\n")
-                    f.write(f"Recorded: {timestamp}\n\n")
-                    for seg in segments:
-                        f.write(f"{seg['timestamp']} {seg['text']}\n")
+        # Start audio capture in executor (sync call)
+        loop = asyncio.get_event_loop()
+        async with bot_manager._lock:
+            if bot_manager._bot is not None:
+                await loop.run_in_executor(None, bot_manager._bot.start_audio_capture)
 
-                print(f"Transcript saved: {transcript_path}")
-
-                # Broadcast completion
-                await manager.broadcast(
-                    {
-                        "type": "zoom_bot_event",
-                        "event": "transcription_complete",
-                        "segments": len(segments),
-                        "transcript_path": os.path.basename(transcript_path),
-                    }
-                )
-
-        zoom_bot_state["total_audio_bytes"] = 0
-
-
-@app.get("/api/zoom/bot-status")
-async def zoom_bot_status() -> dict[str, Any]:
-    """Get Zoom bot connection status."""
-    return {
-        "connected": zoom_bot_state["connected"],
-        "meeting_number": zoom_bot_state["meeting_number"],
-        "audio_received_bytes": zoom_bot_state["total_audio_bytes"],
-    }
-
-
-@app.post("/api/zoom/join")
-async def zoom_join_meeting(body: dict[str, Any]) -> JSONResponse:
-    """Send join command to Zoom bot.
-
-    Requires the bot to be running (docker-compose up).
-    """
-    import websockets as ws_client
-
-    meeting_number = body.get("meeting_number", "")
-    password = body.get("password", "")
-    display_name = body.get("display_name", "Transcription Bot")
-
-    if not meeting_number:
-        return JSONResponse(status_code=400, content={"error": "meeting_number required"})
-
-    try:
-        # Connect to the bot's command server
-        bot_url = os.getenv("ZOOM_BOT_URL", "ws://localhost:3001")
-        async with ws_client.connect(bot_url) as websocket:
-            # Send join command
-            await websocket.send(
-                json.dumps(
-                    {
-                        "type": "join",
-                        "meeting_number": meeting_number,
-                        "password": password,
-                        "display_name": display_name,
-                    }
-                )
-            )
-
-            # Wait for response
-            response = await asyncio.wait_for(websocket.recv(), timeout=30.0)
-            result = json.loads(response)
-
-            if result.get("success"):
-                return JSONResponse(
-                    content={
-                        "status": "joining",
-                        "meeting_number": meeting_number,
-                    }
-                )
-            else:
-                return JSONResponse(
-                    status_code=500,
-                    content={
-                        "error": result.get("error", "Join failed"),
-                    },
-                )
-
-    except asyncio.TimeoutError:
-        return JSONResponse(status_code=504, content={"error": "Bot response timeout"})
+        await manager.broadcast({"type": "zoom_bot_status", **bot_manager.get_status()})
     except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": f"Failed to connect to bot: {e}. Is the bot running?",
-            },
+        print(f"Zoom bot error: {e}")
+        await manager.broadcast(
+            {
+                "type": "zoom_bot_status",
+                "bot_state": BotState.ERROR.value,
+                "is_recording": False,
+                "recording_duration": 0.0,
+                "error_message": str(e),
+            }
         )
 
 
-@app.post("/api/zoom/leave")
-async def zoom_leave_meeting() -> JSONResponse:
-    """Send leave command to Zoom bot."""
-    import websockets as ws_client
-
+async def _transcribe_zoom_audio(wav_path: str, duration: float) -> None:
+    """Background task: transcribe zoom audio and broadcast results."""
     try:
-        bot_url = os.getenv("ZOOM_BOT_URL", "ws://localhost:3001")
-        async with ws_client.connect(bot_url) as websocket:
-            await websocket.send(json.dumps({"type": "leave"}))
-            response = await asyncio.wait_for(websocket.recv(), timeout=10.0)
-            result = json.loads(response)
+        print(f"Loading model for Zoom transcription: {WHISPER_MODEL}...")
+        model = load_model()
+        print(f"Transcribing Zoom audio {wav_path} ({duration:.1f}s)...")
 
-            return JSONResponse(content={"status": "left" if result.get("success") else "failed"})
+        progress_queue: Queue[dict[str, Any]] = Queue()
+        loop = asyncio.get_event_loop()
 
+        transcription_future = loop.run_in_executor(
+            None,
+            lambda: transcribe_wav_file_streaming(model, wav_path, duration, progress_queue),
+        )
+
+        segments: list[dict[str, str]] = []
+        while True:
+            try:
+                update = await loop.run_in_executor(None, lambda: progress_queue.get(timeout=0.1))
+                if update["type"] == "progress":
+                    seg = update["segment"]
+                    segments.append(seg)
+                    await manager.broadcast(
+                        {
+                            "type": "zoom_bot_transcript",
+                            "timestamp": seg["timestamp"],
+                            "text": seg["text"],
+                        }
+                    )
+                elif update["type"] == "error":
+                    print(f"Zoom transcription error: {update['error']}")
+                    break
+                elif update["type"] == "done":
+                    print(f"Zoom transcription complete: {update['segments']} segments")
+                    break
+            except Empty:
+                if transcription_future.done():
+                    break
+                continue
+
+        await transcription_future
+
+        # Save transcript file
+        if segments:
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            transcript_path = os.path.join(OUTPUT_DIR, f"transcript_zoom_{timestamp}.txt")
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            with open(transcript_path, "w", encoding="utf-8") as f:
+                f.write("Zoom Meeting Transcript\n")
+                f.write(f"Audio file: {os.path.basename(wav_path)}\n")
+                f.write(f"Model: {WHISPER_MODEL}\n")
+                hours, remainder = divmod(int(duration), 3600)
+                minutes, seconds = divmod(remainder, 60)
+                dur_str = (
+                    f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
+                )
+                f.write(f"Duration: {dur_str}\n\n")
+                for seg in segments:
+                    f.write(f"{seg['timestamp']} {seg['text']}\n")
+            print(f"Zoom transcript saved: {transcript_path}")
+
+            await manager.broadcast(
+                {
+                    "type": "zoom_bot_event",
+                    "event": "transcription_complete",
+                    "segments": len(segments),
+                    "transcript_path": os.path.basename(transcript_path),
+                }
+            )
+
+    except Exception as e:
+        print(f"Zoom transcription failed: {e}")
+
+
+@app.post("/api/zoom-bot/start")
+async def zoom_bot_start(body: dict[str, Any]) -> JSONResponse:
+    """Start the Playwright Zoom bot."""
+    meeting_url = body.get("meeting_url", "")
+    if not meeting_url:
+        return JSONResponse(status_code=400, content={"error": "meeting_url required"})
+
+    if bot_manager.is_active():
+        return JSONResponse(status_code=409, content={"error": "Bot is already active"})
+
+    config = BotConfig(
+        meeting_url=meeting_url,
+        bot_name=body.get("bot_name", "Transcription Bot"),
+        meeting_password=body.get("meeting_password", ""),
+    )
+    asyncio.create_task(_run_zoom_bot(config))
+    return JSONResponse(content={"status": "starting"})
+
+
+@app.post("/api/zoom-bot/stop")
+async def zoom_bot_stop() -> JSONResponse:
+    """Stop the Playwright Zoom bot and transcribe captured audio."""
+    if not bot_manager.is_active():
+        return JSONResponse(status_code=400, content={"error": "Bot is not active"})
+
+    result = await bot_manager.stop_bot()
+    if result:
+        wav_path, duration = result
+        asyncio.create_task(_transcribe_zoom_audio(wav_path, duration))
+        return JSONResponse(
+            content={
+                "status": "stopped",
+                "wav_path": os.path.basename(wav_path),
+                "duration": duration,
+            }
+        )
+    return JSONResponse(content={"status": "stopped", "wav_path": None, "duration": 0})
+
+
+@app.get("/api/zoom-bot/status")
+async def zoom_bot_status() -> dict[str, Any]:
+    """Get Zoom bot status."""
+    return bot_manager.get_status()
+
+
+@app.get("/api/zoom-bot/breakout-rooms")
+async def zoom_bot_breakout_rooms() -> JSONResponse:
+    """List available breakout rooms."""
+    if not bot_manager.is_active():
+        return JSONResponse(status_code=400, content={"error": "Bot is not active"})
+    try:
+        rooms = await bot_manager.get_breakout_rooms()
+        return JSONResponse(content={"rooms": rooms})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/zoom-bot/join-breakout")
+async def zoom_bot_join_breakout(body: dict[str, Any]) -> JSONResponse:
+    """Join a breakout room."""
+    room_name = body.get("room_name", "")
+    if not room_name:
+        return JSONResponse(status_code=400, content={"error": "room_name required"})
+    if not bot_manager.is_active():
+        return JSONResponse(status_code=400, content={"error": "Bot is not active"})
+    try:
+        success = await bot_manager.join_breakout_room(room_name)
+        return JSONResponse(content={"success": success})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

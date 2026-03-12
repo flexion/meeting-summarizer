@@ -4,614 +4,958 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Live Transcription</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.bunny.net/css?family=geist-mono:400" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        html, body {
-            height: 100%;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a2e;
-            color: #eee;
-            display: flex;
-            flex-direction: column;
+        :root {
+            --bg-base: #0e0e14;
+            --bg-surface: #141420;
+            --bg-elevated: #1a1a2e;
+            --border: #1e1e30;
+            --text-primary: #eee;
+            --text-secondary: #888;
+            --text-dim: #555;
+            --accent-teal: #00d4a0;
+            --accent-blue: #4a9eff;
+            --accent-red: #ff3a5c;
+            --accent-amber: #f5a623;
+            --sidebar-w: 64px;
+            --panel-w: 340px;
         }
 
-        /* Tab Navigation */
-        .tab-nav {
-            display: flex;
-            background: #0f0f1a;
-            border-bottom: 1px solid #2a2a4a;
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; }
+
+        body {
+            font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-base);
+            color: var(--text-primary);
+            display: grid;
+            grid-template-columns: var(--sidebar-w) 1fr var(--panel-w);
+            height: 100vh;
+            overflow: hidden;
         }
-        .tab-btn {
-            flex: 1;
-            padding: 16px 24px;
-            background: transparent;
+
+        /* ── Sidebar ── */
+        #sidebar {
+            background: var(--bg-surface);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 16px;
+            gap: 4px;
+            z-index: 10;
+        }
+
+        .sidebar-btn {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: none;
             border: none;
-            color: #888;
-            font-size: 15px;
-            font-weight: 500;
+            border-left: 3px solid transparent;
+            color: var(--text-dim);
             cursor: pointer;
+            border-radius: 8px;
             transition: all 0.2s;
             position: relative;
         }
-        .tab-btn:hover {
-            color: #ccc;
-            background: rgba(255,255,255,0.03);
-        }
-        .tab-btn.active {
-            color: #4ecca3;
-        }
-        .tab-btn.active::after {
-            content: '';
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            height: 2px;
-            background: #4ecca3;
-        }
-        .tab-btn .badge {
-            display: inline-block;
-            background: #e94560;
-            color: #fff;
-            font-size: 10px;
-            padding: 2px 6px;
-            border-radius: 10px;
-            margin-left: 8px;
+
+        .sidebar-btn:hover { color: var(--text-secondary); background: rgba(255,255,255,0.03); }
+
+        .sidebar-btn.active {
+            color: var(--accent-teal);
+            border-left-color: var(--accent-teal);
+            filter: drop-shadow(0 0 6px rgba(0,212,160,0.3));
         }
 
-        /* Tab Content */
-        .tab-content {
-            flex: 1;
-            display: none;
-            overflow: hidden;
+        .sidebar-btn.active[data-view="view-zoom"] {
+            color: var(--accent-blue);
+            border-left-color: var(--accent-blue);
+            filter: drop-shadow(0 0 6px rgba(74,158,255,0.3));
         }
-        .tab-content.active {
+
+        .sidebar-btn svg { width: 22px; height: 22px; }
+
+        .activity-dot {
+            display: none;
+            position: absolute;
+            top: 8px;
+            right: 6px;
+            width: 8px;
+            height: 8px;
+            background: var(--accent-blue);
+            border-radius: 50%;
+            border: 2px solid var(--bg-surface);
+        }
+
+        .activity-dot.visible { display: block; }
+
+        /* ── Workspace ── */
+        #workspace {
             display: flex;
             flex-direction: column;
+            position: relative;
+            overflow: hidden;
+            background: var(--bg-base);
         }
 
-        /* ===== RECORD TAB ===== */
-        .record-tab {
-            padding: 20px;
-            max-width: 900px;
-            margin: 0 auto;
-            width: 100%;
+        #source-indicator {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 3px;
+            height: 100%;
+            background: transparent;
+            z-index: 5;
+            transition: background 0.3s;
+        }
+
+        #source-indicator.recording {
+            background: var(--accent-teal);
+            animation: pulse-glow 2s infinite;
+        }
+
+        #source-indicator.zoom-active {
+            background: var(--accent-blue);
+            animation: sweep-glow 3s infinite;
+            transform-origin: center;
+        }
+
+        #source-indicator.transcribing {
+            background: var(--accent-amber);
+        }
+
+        .view-section {
+            display: none;
+            flex: 1;
+            flex-direction: column;
+            padding: 32px;
             overflow-y: auto;
         }
-        .controls {
-            background: #16213e;
-            padding: 20px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-        }
-        .control-row {
+
+        .view-section.active {
             display: flex;
-            gap: 15px;
+        }
+
+        .view-title {
+            font-size: 22px;
+            font-weight: 600;
+            margin-bottom: 24px;
+        }
+
+        /* ── Record View ── */
+        .device-row {
+            display: flex;
+            gap: 12px;
             align-items: center;
-            flex-wrap: wrap;
+            margin-bottom: 24px;
         }
-        select {
+
+        #device-select {
             flex: 1;
-            min-width: 200px;
-            padding: 12px;
-            border: none;
-            border-radius: 6px;
-            background: #0f3460;
-            color: #fff;
+            padding: 10px 14px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: inherit;
             font-size: 14px;
-            cursor: pointer;
+            outline: none;
         }
-        select:focus {
-            outline: 2px solid #4ecca3;
-        }
-        button {
-            padding: 12px 30px;
+
+        #device-select:focus { border-color: var(--accent-teal); }
+
+        #record-btn {
+            padding: 10px 28px;
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
+            font-family: inherit;
             font-size: 14px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.2s;
-        }
-        .btn-start {
-            background: #4ecca3;
-            color: #1a1a2e;
-        }
-        .btn-start:hover {
-            background: #3db892;
-        }
-        .btn-stop {
-            background: #e94560;
-            color: #fff;
-        }
-        .btn-stop:hover {
-            background: #d63850;
-        }
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        .level-meter {
-            background: #16213e;
-            padding: 20px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-        }
-        .level-label {
-            font-size: 12px;
-            color: #888;
-            margin-bottom: 8px;
-        }
-        .level-bar-container {
-            background: #0f3460;
-            border-radius: 4px;
-            height: 24px;
-            overflow: hidden;
-        }
-        .level-bar {
-            height: 100%;
-            background: linear-gradient(90deg, #4ecca3, #e94560);
-            width: 0%;
-            transition: width 0.1s ease-out;
-            border-radius: 4px;
-        }
-        .status {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 10px;
-            font-size: 12px;
-            color: #888;
-        }
-        .status-indicator {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .status-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: #666;
-        }
-        .status-dot.recording {
-            background: #e94560;
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        .transcript-container {
-            background: #16213e;
-            border-radius: 10px;
-            flex: 1;
-            min-height: 300px;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-        .transcript-header {
-            padding: 15px 20px;
-            border-bottom: 1px solid #0f3460;
-            font-size: 14px;
-            color: #888;
-        }
-        .transcript {
-            flex: 1;
-            padding: 20px;
-            overflow-y: auto;
-            font-size: 15px;
-            line-height: 1.8;
-        }
-        .transcript-segment {
-            margin-bottom: 15px;
-            padding-left: 90px;
-            position: relative;
-        }
-        .transcript-timestamp {
-            position: absolute;
-            left: 0;
-            color: #4ecca3;
-            font-family: monospace;
-            font-size: 13px;
-        }
-        .transcript-text {
-            color: #ddd;
-        }
-        .empty-state {
-            color: #666;
-            text-align: center;
-            padding-top: 50px;
+            white-space: nowrap;
         }
 
-        /* Progress bar for transcription */
-        .progress-container {
-            background: #16213e;
-            padding: 20px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            display: none;
+        #record-btn.start {
+            background: var(--accent-teal);
+            color: #000;
         }
-        .progress-container.active {
-            display: block;
+
+        #record-btn.start:hover { filter: brightness(1.1); }
+
+        #record-btn.stop {
+            background: var(--accent-red);
+            color: #fff;
         }
-        .progress-label {
-            font-size: 12px;
-            color: #888;
-            margin-bottom: 8px;
+
+        #record-btn.stop:hover { filter: brightness(1.1); }
+
+        #record-btn.processing {
+            background: var(--accent-amber);
+            color: #000;
+        }
+
+        #record-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        /* Level meter */
+        .level-meter {
             display: flex;
-            justify-content: space-between;
+            gap: 3px;
+            align-items: flex-end;
+            height: 32px;
+            margin-bottom: 20px;
         }
-        .progress-bar-container {
-            background: #0f3460;
-            border-radius: 4px;
-            height: 24px;
+
+        .level-seg {
+            flex: 1;
+            height: 100%;
+            background: var(--border);
+            border-radius: 2px;
+            transition: background 0.08s;
+        }
+
+        .level-seg.active-low { background: var(--accent-teal); }
+        .level-seg.active-mid { background: var(--accent-amber); }
+        .level-seg.active-high { background: var(--accent-red); }
+
+        /* Status area */
+        .status-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-dim);
+        }
+
+        .status-dot.recording {
+            background: var(--accent-red);
+            animation: pulse-glow 1.5s infinite;
+        }
+
+        #elapsed-time {
+            font-family: 'Geist Mono', monospace;
+            color: var(--text-primary);
+        }
+
+        #recording-info {
+            font-size: 13px;
+            color: var(--text-dim);
+            margin-top: 8px;
+        }
+
+        /* Progress bar */
+        .progress-container {
+            display: none;
+            margin-top: 16px;
+        }
+
+        .progress-container.active { display: block; }
+
+        .progress-bar-track {
+            width: 100%;
+            height: 6px;
+            background: var(--border);
+            border-radius: 3px;
             overflow: hidden;
         }
-        .progress-bar {
+
+        .progress-bar-fill {
             height: 100%;
-            background: linear-gradient(90deg, #4ecca3, #3db892);
+            background: var(--accent-teal);
+            border-radius: 3px;
+            transition: width 0.3s;
             width: 0%;
-            transition: width 0.3s ease-out;
-            border-radius: 4px;
-            position: relative;
         }
-        .progress-bar.indeterminate {
+
+        .progress-bar-fill.indeterminate {
             width: 30%;
-            animation: indeterminate 1.5s infinite ease-in-out;
+            animation: indeterminate 1.5s infinite;
         }
+
         @keyframes indeterminate {
             0% { transform: translateX(-100%); }
             100% { transform: translateX(400%); }
         }
-        .progress-text {
-            font-size: 13px;
-            color: #4ecca3;
-            margin-top: 8px;
-            text-align: center;
+
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 6px;
+            font-family: 'Geist Mono', monospace;
         }
 
-        /* ===== CHAT TAB ===== */
-        .chat-tab {
+        /* ── Zoom View ── */
+        .zoom-form {
             display: flex;
             flex-direction: column;
-            height: 100%;
-        }
-        .chat-sidebar {
-            background: #0f0f1a;
-            padding: 16px 20px;
-            border-bottom: 1px solid #2a2a4a;
-            display: flex;
             gap: 12px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-        .chat-sidebar select {
-            min-width: 250px;
-            padding: 10px 12px;
-            font-size: 13px;
-        }
-        .btn-sm {
-            padding: 10px 16px;
-            font-size: 13px;
-        }
-        .btn-load {
-            background: #4ecca3;
-            color: #1a1a2e;
-        }
-        .btn-load:hover {
-            background: #3db892;
-        }
-        .btn-secondary {
-            background: transparent;
-            color: #888;
-            border: 1px solid #444;
-        }
-        .btn-secondary:hover {
-            color: #fff;
-            border-color: #666;
-        }
-        .loaded-badge {
-            font-size: 12px;
-            color: #4ecca3;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            background: rgba(78, 204, 163, 0.1);
-            border-radius: 20px;
-        }
-        .loaded-badge::before {
-            content: '';
-            width: 8px;
-            height: 8px;
-            background: #4ecca3;
-            border-radius: 50%;
+            max-width: 480px;
+            margin-bottom: 28px;
         }
 
-        .chat-main {
+        .zoom-form input {
+            padding: 10px 14px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .zoom-form input:focus { border-color: var(--accent-blue); }
+
+        .zoom-form input::placeholder { color: var(--text-dim); }
+
+        #zoom-btn {
+            padding: 10px 28px;
+            border: none;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: var(--accent-blue);
+            color: #fff;
+            align-self: flex-start;
+        }
+
+        #zoom-btn:hover { filter: brightness(1.1); }
+
+        #zoom-btn.danger {
+            background: var(--accent-red);
+        }
+
+        #zoom-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        /* State stepper */
+        .state-stepper {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            margin-bottom: 28px;
+            max-width: 560px;
+        }
+
+        .step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        .step-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 2px solid var(--text-dim);
+            background: transparent;
+            transition: all 0.3s;
+        }
+
+        .step.active .step-dot {
+            border-color: var(--accent-blue);
+            animation: step-pulse 2s infinite;
+        }
+
+        .step.done .step-dot {
+            border-color: var(--accent-blue);
+            background: var(--accent-blue);
+        }
+
+        .step-label {
+            font-family: 'Geist Mono', monospace;
+            font-size: 10px;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            letter-spacing: 0.5px;
+        }
+
+        .step.active .step-label,
+        .step.done .step-label { color: var(--accent-blue); }
+
+        .step-line {
             flex: 1;
+            height: 2px;
+            background: var(--text-dim);
+            min-width: 24px;
+            margin: 0 4px;
+            margin-bottom: 22px;
+            transition: background 0.3s;
+        }
+
+        .step-line.done { background: var(--accent-blue); }
+
+        /* Breakout rooms */
+        #breakout-section {
+            display: none;
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border);
+        }
+
+        #breakout-section.visible { display: block; }
+
+        .breakout-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .breakout-header h3 {
+            font-size: 15px;
+            font-weight: 500;
+        }
+
+        .btn-sm {
+            padding: 6px 14px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg-surface);
+            color: var(--text-secondary);
+            font-family: inherit;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-sm:hover {
+            border-color: var(--accent-blue);
+            color: var(--text-primary);
+        }
+
+        #breakout-rooms-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .breakout-room-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .breakout-room-item .btn-sm { border-color: var(--accent-blue); color: var(--accent-blue); }
+
+        /* ── Chat View ── */
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .chat-toolbar {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .chat-toolbar select {
+            flex: 1;
+            min-width: 200px;
+            padding: 8px 12px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 13px;
+            outline: none;
+        }
+
+        .chat-toolbar select:focus { border-color: var(--accent-teal); }
+
+        .btn-load {
+            background: var(--accent-teal);
+            color: #000;
+            border: none;
+        }
+
+        .btn-secondary {
+            background: var(--bg-surface);
+            border-color: var(--border);
+        }
+
+        .loaded-badge {
+            display: none;
+            font-size: 12px;
+            color: var(--accent-teal);
+            padding: 4px 10px;
+            background: rgba(0,212,160,0.1);
+            border-radius: 12px;
+            align-items: center;
+        }
+
+        .loaded-badge.visible { display: flex; }
+
+        #chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 0;
+        }
+
+        .chat-empty {
+            text-align: center;
+            padding: 48px 24px;
+            color: var(--text-dim);
+        }
+
+        .chat-empty h2 {
+            font-size: 18px;
+            font-weight: 500;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+        }
+
+        .chat-empty p { font-size: 14px; }
+
+        .chat-messages-inner {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .chat-message {
+            display: flex;
+            gap: 12px;
+            padding: 12px 0;
+        }
+
+        .chat-message .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .chat-message.user .avatar { background: var(--accent-teal); color: #000; }
+        .chat-message.assistant .avatar { background: var(--accent-blue); color: #fff; }
+        .chat-message.loading .avatar { background: var(--text-dim); color: var(--bg-base); }
+        .chat-message.error .avatar { background: var(--accent-red); color: #fff; }
+
+        .chat-message .content {
+            flex: 1;
+            font-size: 14px;
+            line-height: 1.6;
+            color: var(--text-primary);
+        }
+
+        .chat-message .content p { margin-bottom: 8px; }
+        .chat-message .content p:last-child { margin-bottom: 0; }
+        .chat-message .content code {
+            font-family: 'Geist Mono', monospace;
+            background: var(--bg-surface);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .chat-message .content pre {
+            background: var(--bg-surface);
+            padding: 12px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+
+        .chat-message .content pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .chat-input-area {
+            display: flex;
+            gap: 10px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        #chat-input {
+            flex: 1;
+            padding: 10px 14px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+        }
+
+        #chat-input:focus { border-color: var(--accent-teal); }
+
+        #chat-input::placeholder { color: var(--text-dim); }
+
+        .btn-send {
+            padding: 10px 20px;
+            background: var(--accent-teal);
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-send:hover { filter: brightness(1.1); }
+        .btn-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* ── Transcript Panel ── */
+        #transcript-panel {
+            background: var(--bg-surface);
+            border-left: 1px solid var(--border);
             display: flex;
             flex-direction: column;
             overflow: hidden;
         }
-        .chat-messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 30px 20px;
-        }
-        .chat-messages-inner {
-            max-width: 800px;
-            margin: 0 auto;
-            display: flex;
-            flex-direction: column;
-            gap: 24px;
-        }
-        .chat-message {
-            display: flex;
-            gap: 16px;
-            line-height: 1.6;
-        }
-        .chat-message .avatar {
-            width: 36px;
-            height: 36px;
-            border-radius: 6px;
+
+        .transcript-panel-header {
             display: flex;
             align-items: center;
-            justify-content: center;
-            font-size: 14px;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
             font-weight: 600;
-            flex-shrink: 0;
-        }
-        .chat-message.user .avatar {
-            background: #4ecca3;
-            color: #1a1a2e;
-        }
-        .chat-message.assistant .avatar {
-            background: #e94560;
-            color: #fff;
-        }
-        .chat-message .content {
-            flex: 1;
-            padding-top: 6px;
-        }
-        .chat-message.user .content {
-            color: #eee;
-        }
-        .chat-message.assistant .content {
-            color: #ccc;
-        }
-        /* Markdown styling for assistant messages */
-        .chat-message.assistant .content h1 {
-            font-size: 1.4em;
-            font-weight: 600;
-            margin: 16px 0 8px 0;
-            color: #fff;
-        }
-        .chat-message.assistant .content h2 {
-            font-size: 1.2em;
-            font-weight: 600;
-            margin: 14px 0 6px 0;
-            color: #fff;
-        }
-        .chat-message.assistant .content h3 {
-            font-size: 1.1em;
-            font-weight: 600;
-            margin: 12px 0 4px 0;
-            color: #eee;
-        }
-        .chat-message.assistant .content p {
-            margin: 8px 0;
-        }
-        .chat-message.assistant .content ul,
-        .chat-message.assistant .content ol {
-            margin: 8px 0;
-            padding-left: 24px;
-        }
-        .chat-message.assistant .content li {
-            margin: 4px 0;
-        }
-        .chat-message.assistant .content strong {
-            color: #fff;
-            font-weight: 600;
-        }
-        .chat-message.assistant .content code {
-            background: #0f3460;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 0.9em;
-        }
-        .chat-message.assistant .content pre {
-            background: #0f3460;
-            padding: 12px;
-            border-radius: 6px;
-            overflow-x: auto;
-            margin: 8px 0;
-        }
-        .chat-message.assistant .content pre code {
-            background: none;
-            padding: 0;
-        }
-        .chat-message.assistant .content blockquote {
-            border-left: 3px solid #4ecca3;
-            padding-left: 12px;
-            margin: 8px 0;
-            color: #aaa;
-        }
-        .chat-message.assistant .content hr {
-            border: none;
-            border-top: 1px solid #2a2a4a;
-            margin: 16px 0;
-        }
-        .chat-message.assistant .content > *:first-child {
-            margin-top: 0;
-        }
-        .chat-message.loading .content {
-            color: #888;
-            font-style: italic;
-        }
-        .chat-message.error .content {
-            color: #e94560;
-        }
-        .chat-empty {
-            text-align: center;
-            color: #666;
-            padding: 60px 20px;
-        }
-        .chat-empty h2 {
-            font-size: 20px;
-            font-weight: 500;
-            margin-bottom: 12px;
-            color: #888;
-        }
-        .chat-empty p {
             font-size: 14px;
         }
 
-        .chat-input-area {
-            padding: 20px;
-            background: linear-gradient(to top, #1a1a2e 80%, transparent);
+        #transcript-source-badge {
+            font-family: 'Geist Mono', monospace;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            display: none;
         }
-        .chat-input-container {
-            max-width: 800px;
-            margin: 0 auto;
-            display: flex;
-            gap: 12px;
-            background: #16213e;
-            border-radius: 12px;
-            padding: 12px 16px;
-            border: 1px solid #2a2a4a;
+
+        #transcript-source-badge.local {
+            display: inline-block;
+            background: rgba(0,212,160,0.15);
+            color: var(--accent-teal);
         }
-        .chat-input-container:focus-within {
-            border-color: #4ecca3;
+
+        #transcript-source-badge.zoom {
+            display: inline-block;
+            background: rgba(74,158,255,0.15);
+            color: var(--accent-blue);
         }
-        .chat-input {
+
+        #transcript-segments {
             flex: 1;
-            background: transparent;
-            border: none;
-            color: #fff;
-            font-size: 15px;
-            outline: none;
-            resize: none;
+            overflow-y: auto;
+            padding: 16px 20px;
         }
-        .chat-input::placeholder {
-            color: #666;
+
+        .transcript-segment {
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+            animation: seg-in 0.3s ease-out;
         }
-        .btn-send {
-            background: #4ecca3;
-            color: #1a1a2e;
+
+        .transcript-timestamp {
+            font-family: 'Geist Mono', monospace;
+            font-size: 11px;
+            color: var(--accent-teal);
+            margin-right: 10px;
+        }
+
+        .transcript-text {
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--text-primary);
+        }
+
+        .transcript-empty {
+            text-align: center;
+            padding: 48px 16px;
+            color: var(--text-dim);
+            font-size: 13px;
+        }
+
+        /* ── Toast ── */
+        .toast-container {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .toast {
             padding: 10px 20px;
             border-radius: 8px;
-        }
-        .btn-send:hover {
-            background: #3db892;
-        }
-        .btn-send:disabled {
-            background: #333;
-            color: #666;
+            font-size: 13px;
+            font-weight: 500;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: all 0.3s;
+            pointer-events: none;
         }
 
-        /* Error Toast */
-        .error-toast {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: #e94560;
-            color: #fff;
-            padding: 15px 20px;
-            border-radius: 6px;
+        .toast.show {
+            opacity: 1;
+            transform: none;
+        }
+
+        .toast.error { background: var(--accent-red); color: #fff; }
+        .toast.success { background: var(--accent-teal); color: #000; }
+        .toast.info { background: var(--accent-blue); color: #fff; }
+
+        /* ── Animations ── */
+        @keyframes pulse-glow { 0%,100%{ opacity:1 } 50%{ opacity:0.4 } }
+        @keyframes sweep-glow { 0%{ transform:scaleY(0.2) } 50%{ transform:scaleY(1) } 100%{ transform:scaleY(0.2) } }
+        @keyframes seg-in { from{ opacity:0; transform:translateY(8px) } to{ opacity:1; transform:none } }
+        @keyframes step-pulse { 0%,100%{ box-shadow:0 0 0 0 rgba(74,158,255,0.4) } 50%{ box-shadow:0 0 0 6px rgba(74,158,255,0) } }
+
+        /* ── Mobile Toggle Button ── */
+        .transcript-toggle {
             display: none;
-            max-width: 300px;
-            z-index: 1000;
-        }
-        .error-toast.show {
-            display: block;
-            animation: slideIn 0.3s ease-out;
-        }
-        @keyframes slideIn {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
+            position: fixed;
+            bottom: 72px;
+            right: 16px;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 100;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
         }
 
+        .transcript-toggle svg { width: 20px; height: 20px; }
+
+        /* ── Responsive ── */
+        @media (max-width: 900px) {
+            body {
+                grid-template-columns: 1fr;
+                grid-template-rows: 1fr auto;
+            }
+
+            #sidebar {
+                order: 2;
+                flex-direction: row;
+                border-right: none;
+                border-top: 1px solid var(--border);
+                padding: 0;
+                justify-content: center;
+                gap: 0;
+            }
+
+            .sidebar-btn {
+                flex: 1;
+                border-left: none;
+                border-top: 3px solid transparent;
+                border-radius: 0;
+                height: 56px;
+            }
+
+            .sidebar-btn.active {
+                border-left-color: transparent;
+                border-top-color: var(--accent-teal);
+            }
+
+            .sidebar-btn.active[data-view="view-zoom"] {
+                border-left-color: transparent;
+                border-top-color: var(--accent-blue);
+            }
+
+            #workspace { order: 1; }
+
+            #transcript-panel {
+                display: none;
+                position: fixed;
+                top: 0;
+                right: 0;
+                bottom: 56px;
+                width: 100%;
+                z-index: 50;
+            }
+
+            #transcript-panel.mobile-open { display: flex; }
+
+            .transcript-toggle { display: flex; }
+        }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
-    <!-- Tab Navigation -->
-    <nav class="tab-nav">
-        <button class="tab-btn active" data-tab="record">Record</button>
-        <button class="tab-btn" data-tab="chat">Chat</button>
-    </nav>
 
-    <!-- Record Tab -->
-    <div id="record-tab" class="tab-content active">
-        <div class="record-tab">
-            <div class="controls">
-                <div class="control-row">
-                    <select id="device-select">
-                        <option value="">Loading devices...</option>
-                    </select>
-                    <button id="control-btn" class="btn-start" disabled>Start</button>
-                </div>
+    <!-- Sidebar -->
+    <aside id="sidebar">
+        <button class="sidebar-btn active" data-view="view-record" onclick="navigateTo('view-record')" title="Local Recording">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+        </button>
+        <button class="sidebar-btn" data-view="view-zoom" onclick="navigateTo('view-zoom')" title="Zoom Bot">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="23 7 16 12 23 17 23 7"/>
+                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+            </svg>
+            <span id="zoom-activity-dot" class="activity-dot"></span>
+        </button>
+        <button class="sidebar-btn" data-view="view-chat" onclick="navigateTo('view-chat')" title="Chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+        </button>
+    </aside>
+
+    <!-- Workspace -->
+    <main id="workspace">
+        <div id="source-indicator"></div>
+
+        <!-- Record View -->
+        <section id="view-record" class="view-section active">
+            <h1 class="view-title">Local Recording</h1>
+
+            <div class="device-row">
+                <select id="device-select">
+                    <option value="">Loading devices...</option>
+                </select>
+                <button id="record-btn" class="start" disabled>Start</button>
             </div>
 
-            <div class="level-meter">
-                <div class="level-label">Audio Level</div>
-                <div class="level-bar-container">
-                    <div id="level-bar" class="level-bar"></div>
-                </div>
-                <div class="status">
-                    <div class="status-indicator">
-                        <div id="status-dot" class="status-dot"></div>
-                        <span id="status-text">Ready</span>
-                    </div>
-                    <span id="elapsed-time"></span>
-                </div>
+            <div class="level-meter" id="level-meter"></div>
+
+            <div class="status-row">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="status-text">Ready</span>
+                <span id="elapsed-time"></span>
             </div>
 
-            <div id="progress-container" class="progress-container">
-                <div class="progress-label">
-                    <span>Transcribing audio...</span>
+            <div id="recording-info"></div>
+
+            <div class="progress-container" id="progress-container">
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" id="progress-bar"></div>
+                </div>
+                <div class="progress-info">
+                    <span id="progress-text">Loading model...</span>
                     <span id="progress-percent">0%</span>
                 </div>
-                <div class="progress-bar-container">
-                    <div id="progress-bar" class="progress-bar"></div>
+            </div>
+        </section>
+
+        <!-- Zoom View -->
+        <section id="view-zoom" class="view-section">
+            <h1 class="view-title">Zoom Bot</h1>
+
+            <div class="zoom-form">
+                <input type="text" id="zoom-url" placeholder="Zoom meeting URL (required)" />
+                <input type="text" id="zoom-name" placeholder="Bot display name (optional)" />
+                <input type="password" id="zoom-pass" placeholder="Meeting password (optional)" />
+                <button id="zoom-btn">Join Meeting</button>
+            </div>
+
+            <div class="state-stepper" id="state-stepper">
+                <div class="step" data-step="0">
+                    <div class="step-dot"></div>
+                    <span class="step-label">Idle</span>
                 </div>
-                <div id="progress-text" class="progress-text">Loading model...</div>
-            </div>
-
-            <div class="transcript-container">
-                <div class="transcript-header">Transcript</div>
-                <div id="transcript" class="transcript">
-                    <div class="empty-state">Select an audio device and click Start to begin recording. Transcription will appear after you stop.</div>
+                <div class="step-line" data-line="0"></div>
+                <div class="step" data-step="1">
+                    <div class="step-dot"></div>
+                    <span class="step-label">Launching</span>
+                </div>
+                <div class="step-line" data-line="1"></div>
+                <div class="step" data-step="2">
+                    <div class="step-dot"></div>
+                    <span class="step-label">Joining</span>
+                </div>
+                <div class="step-line" data-line="2"></div>
+                <div class="step" data-step="3">
+                    <div class="step-dot"></div>
+                    <span class="step-label">In Meeting</span>
+                </div>
+                <div class="step-line" data-line="3"></div>
+                <div class="step" data-step="4">
+                    <div class="step-dot"></div>
+                    <span class="step-label">Recording</span>
                 </div>
             </div>
-        </div>
-    </div>
 
-    <!-- Chat Tab -->
-    <div id="chat-tab" class="tab-content">
-        <div class="chat-tab">
-            <div class="chat-sidebar">
-                <select id="transcript-select">
-                    <option value="">Select a transcript...</option>
-                </select>
-                <button id="load-btn" class="btn-sm btn-load" disabled>Load</button>
-                <button id="unload-btn" class="btn-sm btn-secondary" style="display: none;">Unload</button>
-                <button id="clear-chat-btn" class="btn-sm btn-secondary">Clear Chat</button>
-                <span id="loaded-indicator" class="loaded-badge" style="display: none;"></span>
+            <div id="breakout-section">
+                <div class="breakout-header">
+                    <h3>Breakout Rooms</h3>
+                    <button class="btn-sm" onclick="fetchBreakoutRooms()">Refresh Rooms</button>
+                </div>
+                <div id="breakout-rooms-list"></div>
             </div>
+        </section>
 
-            <div class="chat-main">
-                <div id="chat-messages" class="chat-messages">
+        <!-- Chat View -->
+        <section id="view-chat" class="view-section">
+            <h1 class="view-title">Chat</h1>
+
+            <div class="chat-container">
+                <div class="chat-toolbar">
+                    <select id="transcript-select">
+                        <option value="">Select a transcript...</option>
+                    </select>
+                    <button id="load-btn" class="btn-sm btn-load" disabled>Load</button>
+                    <button id="unload-btn" class="btn-sm btn-secondary" style="display:none;">Unload</button>
+                    <button id="clear-chat-btn" class="btn-sm btn-secondary">Clear Chat</button>
+                    <span id="loaded-indicator" class="loaded-badge"></span>
+                </div>
+
+                <div id="chat-messages">
                     <div class="chat-empty">
                         <h2>Chat with your transcripts</h2>
                         <p>Select a transcript above or start recording to ask questions about your meetings.</p>
@@ -619,29 +963,77 @@
                 </div>
 
                 <div class="chat-input-area">
-                    <div class="chat-input-container">
-                        <input type="text" id="chat-input" class="chat-input" placeholder="Ask a question about the meeting..." />
-                        <button id="send-btn" class="btn-send">Send</button>
-                    </div>
+                    <input type="text" id="chat-input" placeholder="Ask a question about the meeting..." />
+                    <button class="btn-send" id="send-btn">Send</button>
                 </div>
             </div>
-        </div>
-    </div>
+        </section>
+    </main>
 
-    <div id="error-toast" class="error-toast"></div>
+    <!-- Transcript Panel -->
+    <aside id="transcript-panel">
+        <div class="transcript-panel-header">
+            <span>Transcript</span>
+            <span id="transcript-source-badge"></span>
+        </div>
+        <div id="transcript-segments">
+            <div class="transcript-empty">Transcript segments will appear here during recording or when a Zoom bot is active.</div>
+        </div>
+    </aside>
+
+    <!-- Mobile transcript toggle -->
+    <button class="transcript-toggle" id="transcript-toggle" onclick="toggleTranscriptPanel()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+        </svg>
+    </button>
+
+    <!-- Toast container -->
+    <div class="toast-container" id="toast-container"></div>
 
     <script>
-        // Elements
-        const tabBtns = document.querySelectorAll('.tab-btn');
-        const tabContents = document.querySelectorAll('.tab-content');
+        // ── State ──
+        let isRunning = false;
+        let isTranscribing = false;
+        let zoomBotState = 'idle';
+        let zoomBotRecording = false;
+        let zoomBotDuration = 0;
+        let elapsedInterval = null;
+        let transcriptSource = 'local';
+
+        let ws = null;
+        let reconnectTimer = null;
+        let hasTranscript = false;
+        let isSending = false;
+        let loadedFile = null;
+
+        // ── DOM Refs ──
         const deviceSelect = document.getElementById('device-select');
-        const controlBtn = document.getElementById('control-btn');
-        const levelBar = document.getElementById('level-bar');
+        const recordBtn = document.getElementById('record-btn');
+        const levelMeter = document.getElementById('level-meter');
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
         const elapsedTime = document.getElementById('elapsed-time');
-        const transcript = document.getElementById('transcript');
-        const errorToast = document.getElementById('error-toast');
+        const recordingInfo = document.getElementById('recording-info');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress-bar');
+        const progressPercent = document.getElementById('progress-percent');
+        const progressText = document.getElementById('progress-text');
+        const sourceIndicator = document.getElementById('source-indicator');
+        const zoomUrl = document.getElementById('zoom-url');
+        const zoomName = document.getElementById('zoom-name');
+        const zoomPass = document.getElementById('zoom-pass');
+        const zoomBtn = document.getElementById('zoom-btn');
+        const zoomActivityDot = document.getElementById('zoom-activity-dot');
+        const breakoutSection = document.getElementById('breakout-section');
+        const breakoutRoomsList = document.getElementById('breakout-rooms-list');
+        const transcriptSegments = document.getElementById('transcript-segments');
+        const transcriptSourceBadge = document.getElementById('transcript-source-badge');
+        const transcriptPanel = document.getElementById('transcript-panel');
         const chatMessages = document.getElementById('chat-messages');
         const chatInput = document.getElementById('chat-input');
         const sendBtn = document.getElementById('send-btn');
@@ -650,32 +1042,71 @@
         const loadBtn = document.getElementById('load-btn');
         const unloadBtn = document.getElementById('unload-btn');
         const loadedIndicator = document.getElementById('loaded-indicator');
-        const progressContainer = document.getElementById('progress-container');
-        const progressBar = document.getElementById('progress-bar');
-        const progressPercent = document.getElementById('progress-percent');
-        const progressText = document.getElementById('progress-text');
 
-        let ws = null;
-        let isRunning = false;
-        let isTranscribing = false;
-        let reconnectTimer = null;
-        let hasTranscript = false;
-        let isSending = false;
-        let loadedFile = null;
+        // ── Build level segments ──
+        for (let i = 0; i < 24; i++) {
+            const seg = document.createElement('div');
+            seg.className = 'level-seg';
+            levelMeter.appendChild(seg);
+        }
 
-        // Tab switching
-        tabBtns.forEach(btn => {
-            btn.addEventListener('click', () => {
-                const tabId = btn.dataset.tab;
-                tabBtns.forEach(b => b.classList.remove('active'));
-                tabContents.forEach(c => c.classList.remove('active'));
-                btn.classList.add('active');
-                document.getElementById(`${tabId}-tab`).classList.add('active');
-            });
-        });
+        // ── Zoom button label map ──
+        const ZOOM_BTN_LABELS = {
+            idle: 'Join Meeting',
+            launching: 'Launching\u2026',
+            navigating: 'Navigating\u2026',
+            pre_join: 'Joining\u2026',
+            joining: 'Joining\u2026',
+            waiting_room: 'Waiting for admission\u2026',
+            in_meeting: 'Leave Meeting',
+            in_breakout_room: 'Leave Meeting',
+            recording: 'Leave Meeting',
+            error: 'Retry',
+            meeting_ended: 'Join Again',
+            closing: 'Leaving\u2026'
+        };
 
-        // Fetch audio devices
-        async function fetchDevices() {
+        // ── Navigation ──
+        function navigateTo(viewId) {
+            document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
+            const target = document.getElementById(viewId);
+            if (target) target.classList.add('active');
+            const btn = document.querySelector(`.sidebar-btn[data-view="${viewId}"]`);
+            if (btn) btn.classList.add('active');
+        }
+
+        // ── Mobile transcript toggle ──
+        function toggleTranscriptPanel() {
+            transcriptPanel.classList.toggle('mobile-open');
+        }
+
+        // ── Toast system ──
+        function showToast(message, type = 'error') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            requestAnimationFrame(() => toast.classList.add('show'));
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, 5000);
+        }
+
+        // Keep backward compat alias
+        function showError(message) { showToast(message, 'error'); }
+
+        // ── Escape HTML ──
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ── Device Management ──
+        async function updateDevices() {
             try {
                 const response = await fetch('/api/devices');
                 const devices = await response.json();
@@ -688,110 +1119,97 @@
                 }
 
                 deviceSelect.innerHTML = '<option value="">Select audio device...</option>';
-
                 devices.sort((a, b) => b.is_blackhole - a.is_blackhole);
 
                 devices.forEach(device => {
                     const option = document.createElement('option');
                     option.value = device.index;
                     let label = device.name;
-                    if (device.is_blackhole) {
-                        label += ' (Recommended)';
-                    } else if (device.is_aggregate) {
-                        label += ' (Aggregate)';
-                    }
-                    if (!device.has_input) {
-                        label += ' [No Input]';
-                    }
+                    if (device.is_blackhole) label += ' (Recommended)';
+                    else if (device.is_aggregate) label += ' (Aggregate)';
+                    if (!device.has_input) label += ' [No Input]';
                     option.textContent = label;
                     deviceSelect.appendChild(option);
                 });
 
                 const blackhole = devices.find(d => d.is_blackhole);
-                if (blackhole) {
-                    deviceSelect.value = blackhole.index;
-                }
+                if (blackhole) deviceSelect.value = blackhole.index;
 
-                updateControlButton();
+                updateRecordBtn();
             } catch (error) {
-                showError('Failed to load audio devices');
+                showToast('Failed to load audio devices', 'error');
             }
         }
 
-        function updateControlButton() {
+        // ── Record Button ──
+        function updateRecordBtn() {
+            const zoomActive = !['idle', 'error', 'closing', 'meeting_ended'].includes(zoomBotState);
+
             if (isTranscribing) {
-                controlBtn.textContent = 'Processing... (click to cancel)';
-                controlBtn.className = 'btn-stop';
-                controlBtn.disabled = false;  // Allow clicking to reset
+                recordBtn.textContent = 'Processing... (click to cancel)';
+                recordBtn.className = 'processing';
+                recordBtn.disabled = false;
                 deviceSelect.disabled = true;
             } else if (isRunning) {
-                controlBtn.textContent = 'Stop';
-                controlBtn.className = 'btn-stop';
-                controlBtn.disabled = false;
+                recordBtn.textContent = 'Stop';
+                recordBtn.className = 'stop';
+                recordBtn.disabled = false;
                 deviceSelect.disabled = true;
             } else {
-                controlBtn.textContent = 'Start';
-                controlBtn.className = 'btn-start';
-                controlBtn.disabled = !deviceSelect.value;
+                recordBtn.textContent = 'Start';
+                recordBtn.className = 'start';
+                recordBtn.disabled = !deviceSelect.value || zoomActive;
                 deviceSelect.disabled = false;
             }
         }
 
-        async function startTranscription() {
+        // ── Recording Control ──
+        async function startRecording() {
             const deviceId = parseInt(deviceSelect.value);
-
             try {
                 const response = await fetch('/api/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ device_id: deviceId })
                 });
-
                 if (!response.ok) {
                     const data = await response.json();
-                    showError(data.error || 'Failed to start');
+                    showToast(data.error || 'Failed to start', 'error');
                     return;
                 }
-
                 isRunning = true;
-                updateControlButton();
-                showTranscriptMessage('Recording... Click Stop when finished to transcribe.');
-
+                updateRecordBtn();
+                updateSourceIndicator();
             } catch (error) {
-                showError('Failed to start recording');
+                showToast('Failed to start recording', 'error');
             }
         }
 
-        async function stopTranscription() {
-            // Immediately update UI to show we're stopping
+        async function stopRecording() {
             isRunning = false;
             isTranscribing = true;
-            updateControlButton();
-            showProgress(true);  // Show progress bar with indeterminate state
-            clearTranscript();   // Clear transcript to show new segments as they arrive
+            updateRecordBtn();
+            updateSourceIndicator();
+            showProgress(true);
+            clearTranscriptSegments();
 
             try {
-                // The status will be updated via WebSocket as transcription progresses
                 const response = await fetch('/api/stop', { method: 'POST' });
                 const data = await response.json();
-
                 if (!response.ok) {
-                    showError(data.error || 'Failed to stop');
-                    // Reset state on error
+                    showToast(data.error || 'Failed to stop', 'error');
                     isTranscribing = false;
-                    updateControlButton();
+                    updateRecordBtn();
+                    updateSourceIndicator();
                     showProgress(false);
-                    showTranscriptMessage('Transcription failed. Select a device and try again.');
                 }
-                // Refresh transcript list after processing completes
-                fetchTranscripts();
+                loadTranscriptsList();
             } catch (error) {
-                showError('Failed to stop recording: ' + error.message);
-                // Reset state on error
+                showToast('Failed to stop recording: ' + error.message, 'error');
                 isTranscribing = false;
-                updateControlButton();
+                updateRecordBtn();
+                updateSourceIndicator();
                 showProgress(false);
-                showTranscriptMessage('Transcription failed. Select a device and try again.');
             }
         }
 
@@ -800,49 +1218,71 @@
                 await fetch('/api/reset', { method: 'POST' });
                 isRunning = false;
                 isTranscribing = false;
-                updateControlButton();
+                updateRecordBtn();
+                updateSourceIndicator();
                 showProgress(false);
-                showTranscriptMessage('State reset. Select an audio device and click Start to begin recording.');
             } catch (error) {
-                showError('Failed to reset');
+                showToast('Failed to reset', 'error');
             }
         }
 
-        function clearTranscript() {
-            transcript.innerHTML = '';
+        // ── Level Meter ──
+        function sendLevel(value) {
+            const segs = levelMeter.querySelectorAll('.level-seg');
+            const percentage = Math.min(value / 8000, 1);
+            const activeBars = Math.round(percentage * 24);
+
+            segs.forEach((seg, i) => {
+                seg.classList.remove('active-low', 'active-mid', 'active-high');
+                if (i < activeBars) {
+                    if (i <= 8) seg.classList.add('active-low');
+                    else if (i <= 16) seg.classList.add('active-mid');
+                    else seg.classList.add('active-high');
+                }
+            });
         }
 
-        function showTranscriptMessage(message) {
-            transcript.innerHTML = `<div class="empty-state">${message}</div>`;
+        // ── Transcript Segments ──
+        function clearTranscriptSegments() {
+            transcriptSegments.innerHTML = '';
         }
 
         function addTranscriptSegment(timestamp, text) {
-            const emptyState = transcript.querySelector('.empty-state');
-            if (emptyState) emptyState.remove();
+            const empty = transcriptSegments.querySelector('.transcript-empty');
+            if (empty) empty.remove();
 
             hasTranscript = true;
 
             const segment = document.createElement('div');
             segment.className = 'transcript-segment';
             segment.innerHTML = `
-                <span class="transcript-timestamp">${timestamp}</span>
+                <span class="transcript-timestamp">${escapeHtml(timestamp)}</span>
                 <span class="transcript-text">${escapeHtml(text)}</span>
             `;
-            transcript.appendChild(segment);
-            transcript.scrollTop = transcript.scrollHeight;
+            transcriptSegments.appendChild(segment);
+            transcriptSegments.scrollTop = transcriptSegments.scrollHeight;
         }
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+        // ── Transcript Source ──
+        function setTranscriptSource(source) {
+            transcriptSource = source;
+            transcriptSourceBadge.className = source;
+            transcriptSourceBadge.textContent = source === 'zoom' ? 'ZOOM' : 'LOCAL';
         }
 
-        function updateLevel(value) {
-            const percentage = Math.min((value / 8000) * 100, 100);
-            levelBar.style.width = `${percentage}%`;
+        // ── Source Indicator ──
+        function updateSourceIndicator() {
+            sourceIndicator.className = '';
+            if (isRunning) {
+                sourceIndicator.className = 'recording';
+            } else if (isTranscribing) {
+                sourceIndicator.className = 'transcribing';
+            } else if (['in_meeting', 'in_breakout_room', 'recording'].includes(zoomBotState)) {
+                sourceIndicator.className = 'zoom-active';
+            }
         }
 
+        // ── Progress Bar ──
         function showProgress(show) {
             if (show) {
                 progressContainer.classList.add('active');
@@ -861,8 +1301,6 @@
             const percent = Math.round(progress * 100);
             progressBar.style.width = `${percent}%`;
             progressPercent.textContent = `${percent}%`;
-
-            // Format times
             const processedStr = formatTime(Math.round(processedSeconds));
             const totalStr = formatTime(Math.round(totalSeconds));
             progressText.textContent = `Processed ${processedStr} of ${totalStr}`;
@@ -874,78 +1312,11 @@
             return `${mins}:${String(secs).padStart(2, '0')}`;
         }
 
-        function updateStatus(status) {
-            isRunning = status.running;
-            isTranscribing = status.transcribing || false;
-            hasTranscript = status.has_transcript || false;
-            loadedFile = status.loaded_file || null;
-            updateControlButton();
-            updateTranscriptSelector();
-
-            // Update recording/transcribing badge on tab
-            const recordTab = document.querySelector('[data-tab="record"]');
-            const existingBadge = recordTab.querySelector('.badge');
-            if (existingBadge) existingBadge.remove();
-            if (status.running) {
-                const badge = document.createElement('span');
-                badge.className = 'badge';
-                badge.textContent = 'LIVE';
-                recordTab.appendChild(badge);
-            } else if (status.transcribing) {
-                const badge = document.createElement('span');
-                badge.className = 'badge';
-                badge.style.background = '#4ecca3';
-                badge.textContent = 'PROCESSING';
-                recordTab.appendChild(badge);
-            }
-
-            if (status.running) {
-                statusDot.classList.add('recording');
-                statusText.textContent = `Recording from ${status.device}`;
-                updateElapsedTime(status.elapsed_seconds);
-            } else if (status.transcribing) {
-                statusDot.classList.remove('recording');
-                statusText.textContent = 'Transcribing audio...';
-                updateElapsedTime(status.elapsed_seconds);
-                levelBar.style.width = '0%';
-                // Show processing message if transcript is empty
-                if (!transcript.querySelector('.transcript-segment')) {
-                    showTranscriptMessage('Processing audio... This may take a moment.');
-                }
-            } else {
-                statusDot.classList.remove('recording');
-                statusText.textContent = 'Ready';
-                elapsedTime.textContent = '';
-                levelBar.style.width = '0%';
-            }
-        }
-
-        function updateTranscriptSelector() {
-            if (loadedFile) {
-                loadedIndicator.textContent = loadedFile;
-                loadedIndicator.style.display = 'flex';
-                unloadBtn.style.display = 'inline-block';
-                transcriptSelect.disabled = true;
-                loadBtn.disabled = true;
-            } else if (isRunning || isTranscribing) {
-                loadedIndicator.textContent = isTranscribing ? 'Processing...' : 'Recording...';
-                loadedIndicator.style.display = 'flex';
-                unloadBtn.style.display = 'none';
-                transcriptSelect.disabled = true;
-                loadBtn.disabled = true;
-            } else {
-                loadedIndicator.style.display = 'none';
-                unloadBtn.style.display = 'none';
-                transcriptSelect.disabled = false;
-                loadBtn.disabled = !transcriptSelect.value;
-            }
-        }
-
+        // ── Elapsed Time ──
         function updateElapsedTime(seconds) {
             const hours = Math.floor(seconds / 3600);
             const minutes = Math.floor((seconds % 3600) / 60);
             const secs = seconds % 60;
-
             if (hours > 0) {
                 elapsedTime.textContent = `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
             } else {
@@ -953,81 +1324,200 @@
             }
         }
 
-        function showError(message) {
-            errorToast.textContent = message;
-            errorToast.classList.add('show');
-            setTimeout(() => errorToast.classList.remove('show'), 5000);
-        }
+        // ── Status Handler (local recording) ──
+        function handleStatus(data) {
+            isRunning = data.running;
+            isTranscribing = data.transcribing || false;
+            hasTranscript = data.has_transcript || false;
+            loadedFile = data.loaded_file || null;
+            updateRecordBtn();
+            updateSourceIndicator();
+            updateTranscriptSelector();
 
-        // WebSocket
-        function connectWebSocket() {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-
-            ws.onopen = () => {
-                console.log('WebSocket connected');
-                if (reconnectTimer) {
-                    clearTimeout(reconnectTimer);
-                    reconnectTimer = null;
-                }
-            };
-
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-
-                switch (data.type) {
-                    case 'level':
-                        updateLevel(data.value);
-                        break;
-                    case 'transcript':
-                        addTranscriptSegment(data.timestamp, data.text);
-                        break;
-                    case 'transcription_progress':
-                        updateProgress(data.progress, data.processed_seconds, data.total_seconds);
-                        break;
-                    case 'status':
-                        updateStatus(data);
-                        // Hide progress bar when no longer transcribing
-                        if (!data.transcribing) {
-                            showProgress(false);
-                        }
-                        break;
-                    case 'pong':
-                        break;
-                }
-            };
-
-            ws.onclose = () => {
-                console.log('WebSocket disconnected');
-                reconnectTimer = setTimeout(connectWebSocket, 2000);
-            };
-
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-            };
-        }
-
-        setInterval(() => {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send('ping');
-            }
-        }, 30000);
-
-        // Event listeners
-        deviceSelect.addEventListener('change', updateControlButton);
-
-        controlBtn.addEventListener('click', () => {
-            if (isTranscribing) {
-                // Allow canceling/resetting stuck state
-                resetState();
-            } else if (isRunning) {
-                stopTranscription();
+            if (data.running) {
+                statusDot.classList.add('recording');
+                statusText.textContent = `Recording from ${data.device}`;
+                updateElapsedTime(data.elapsed_seconds);
+            } else if (data.transcribing) {
+                statusDot.classList.remove('recording');
+                statusText.textContent = 'Transcribing audio...';
+                updateElapsedTime(data.elapsed_seconds);
+                sendLevel(0);
             } else {
-                startTranscription();
+                statusDot.classList.remove('recording');
+                statusText.textContent = 'Ready';
+                elapsedTime.textContent = '';
+                sendLevel(0);
+            }
+
+            if (!data.transcribing) {
+                showProgress(false);
+            }
+        }
+
+        // ── Zoom Bot ──
+        async function startZoomBot() {
+            const url = zoomUrl.value.trim();
+            if (!url) {
+                showToast('Meeting URL is required', 'error');
+                return;
+            }
+
+            const payload = { meeting_url: url };
+            const name = zoomName.value.trim();
+            const pass = zoomPass.value.trim();
+            if (name) payload.bot_name = name;
+            if (pass) payload.meeting_password = pass;
+
+            try {
+                const response = await fetch('/api/zoom-bot/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) {
+                    const data = await response.json();
+                    showToast(data.error || 'Failed to start Zoom bot', 'error');
+                }
+            } catch (error) {
+                showToast('Failed to start Zoom bot', 'error');
+            }
+        }
+
+        async function stopZoomBot() {
+            try {
+                const response = await fetch('/api/zoom-bot/stop', { method: 'POST' });
+                if (!response.ok) {
+                    const data = await response.json();
+                    showToast(data.error || 'Failed to stop Zoom bot', 'error');
+                }
+            } catch (error) {
+                showToast('Failed to stop Zoom bot', 'error');
+            }
+        }
+
+        function handleZoomBotStatus(data) {
+            zoomBotState = data.bot_state || 'idle';
+            zoomBotRecording = data.is_recording || false;
+            zoomBotDuration = data.recording_duration || 0;
+
+            updateStateStepper(zoomBotState);
+            updateZoomBtn(zoomBotState);
+            updateSourceIndicator();
+            updateRecordBtn();
+
+            // Activity dot on sidebar
+            const active = !['idle', 'error', 'meeting_ended', 'closing'].includes(zoomBotState);
+            zoomActivityDot.classList.toggle('visible', active);
+
+            // Breakout section visibility
+            const inMeeting = ['in_meeting', 'in_breakout_room', 'recording', 'waiting_for_breakout', 'joining_breakout'].includes(zoomBotState);
+            breakoutSection.classList.toggle('visible', inMeeting);
+        }
+
+        function updateStateStepper(botState) {
+            const stateToStep = {
+                idle: -1,
+                launching: 1, navigating: 1, pre_join: 1,
+                joining: 2, waiting_room: 2,
+                in_meeting: 3, waiting_for_breakout: 3, joining_breakout: 3, in_breakout_room: 3,
+                recording: 4,
+                meeting_ended: -1, error: -1, closing: -1
+            };
+
+            const activeStep = stateToStep[botState] !== undefined ? stateToStep[botState] : -1;
+
+            for (let i = 0; i <= 4; i++) {
+                const step = document.querySelector(`.step[data-step="${i}"]`);
+                if (!step) continue;
+                step.classList.remove('active', 'done');
+                if (activeStep >= 0 && i < activeStep) step.classList.add('done');
+                else if (i === activeStep) step.classList.add('active');
+            }
+
+            for (let i = 0; i <= 3; i++) {
+                const line = document.querySelector(`.step-line[data-line="${i}"]`);
+                if (!line) continue;
+                line.classList.toggle('done', activeStep >= 0 && i < activeStep);
+            }
+        }
+
+        function updateZoomBtn(botState) {
+            const label = ZOOM_BTN_LABELS[botState] || 'Join Meeting';
+            zoomBtn.textContent = label;
+
+            const dangerStates = ['in_meeting', 'in_breakout_room', 'recording'];
+            zoomBtn.classList.toggle('danger', dangerStates.includes(botState));
+
+            const busyStates = ['launching', 'navigating', 'pre_join', 'joining', 'waiting_room', 'closing'];
+            const disabled = busyStates.includes(botState) || isRunning || isTranscribing;
+            zoomBtn.disabled = disabled;
+
+            // Disable form inputs during active session
+            const formDisabled = !['idle', 'error', 'meeting_ended'].includes(botState);
+            zoomUrl.disabled = formDisabled;
+            zoomName.disabled = formDisabled;
+            zoomPass.disabled = formDisabled;
+        }
+
+        // ── Breakout Rooms ──
+        async function fetchBreakoutRooms() {
+            try {
+                const response = await fetch('/api/zoom-bot/breakout-rooms');
+                if (!response.ok) {
+                    showToast('Failed to fetch breakout rooms', 'error');
+                    return;
+                }
+                const data = await response.json();
+                const rooms = data.rooms || [];
+
+                if (rooms.length === 0) {
+                    breakoutRoomsList.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:8px;">No breakout rooms available.</div>';
+                    return;
+                }
+
+                breakoutRoomsList.innerHTML = '';
+                rooms.forEach(room => {
+                    const item = document.createElement('div');
+                    item.className = 'breakout-room-item';
+                    item.innerHTML = `
+                        <span>${escapeHtml(room.name || room)}</span>
+                        <button class="btn-sm" onclick="joinBreakoutRoom('${escapeHtml(typeof room === 'string' ? room : room.name)}')">Join</button>
+                    `;
+                    breakoutRoomsList.appendChild(item);
+                });
+            } catch (error) {
+                showToast('Failed to fetch breakout rooms', 'error');
+            }
+        }
+
+        async function joinBreakoutRoom(roomName) {
+            try {
+                const response = await fetch('/api/zoom-bot/join-breakout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ room_name: roomName })
+                });
+                if (!response.ok) {
+                    const data = await response.json();
+                    showToast(data.error || 'Failed to join breakout room', 'error');
+                }
+            } catch (error) {
+                showToast('Failed to join breakout room', 'error');
+            }
+        }
+
+        // ── Zoom Button Click Handler ──
+        zoomBtn.addEventListener('click', () => {
+            const leaveStates = ['in_meeting', 'in_breakout_room', 'recording'];
+            if (leaveStates.includes(zoomBotState)) {
+                stopZoomBot();
+            } else {
+                startZoomBot();
             }
         });
 
-        // Chat functions
+        // ── Chat Functions ──
         function addChatMessage(content, type) {
             const emptyState = chatMessages.querySelector('.chat-empty');
             if (emptyState) emptyState.remove();
@@ -1049,7 +1539,6 @@
             const contentDiv = document.createElement('div');
             contentDiv.className = 'content';
 
-            // Render markdown for assistant messages, plain text for others
             if (type === 'assistant') {
                 contentDiv.innerHTML = marked.parse(content);
             } else {
@@ -1068,7 +1557,7 @@
             if (!message || isSending) return;
 
             if (!hasTranscript) {
-                showError('No transcript available. Load a transcript or start recording first.');
+                showToast('No transcript available. Load a transcript or start recording first.', 'error');
                 return;
             }
 
@@ -1098,7 +1587,6 @@
 
                 const data = await response.json();
                 addChatMessage(data.response, 'assistant');
-
             } catch (error) {
                 loadingMsg.remove();
                 addChatMessage('Failed to connect to server', 'error');
@@ -1120,23 +1608,12 @@
                     </div>
                 `;
             } catch (error) {
-                showError('Failed to clear chat');
+                showToast('Failed to clear chat', 'error');
             }
         }
 
-        sendBtn.addEventListener('click', sendChatMessage);
-
-        chatInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendChatMessage();
-            }
-        });
-
-        clearChatBtn.addEventListener('click', clearChat);
-
-        // Transcript loading
-        async function fetchTranscripts() {
+        // ── Transcript Loading ──
+        async function loadTranscriptsList() {
             try {
                 const response = await fetch('/api/transcripts');
                 const transcripts = await response.json();
@@ -1158,12 +1635,12 @@
 
                 updateTranscriptSelector();
             } catch (error) {
-                showError('Failed to load transcript list');
+                showToast('Failed to load transcript list', 'error');
             }
         }
 
-        async function loadTranscript() {
-            const filename = transcriptSelect.value;
+        async function loadTranscript(filename) {
+            if (!filename) filename = transcriptSelect.value;
             if (!filename) return;
 
             loadBtn.disabled = true;
@@ -1178,15 +1655,13 @@
 
                 if (!response.ok) {
                     const data = await response.json();
-                    showError(data.error || 'Failed to load transcript');
+                    showToast(data.error || 'Failed to load transcript', 'error');
                     loadBtn.textContent = 'Load';
                     loadBtn.disabled = !transcriptSelect.value;
                     return;
                 }
 
                 const data = await response.json();
-
-                // Update local state immediately (WebSocket will also update, but this ensures consistency)
                 hasTranscript = true;
                 loadedFile = filename;
 
@@ -1198,9 +1673,8 @@
                 `;
 
                 updateTranscriptSelector();
-
             } catch (error) {
-                showError('Failed to load transcript');
+                showToast('Failed to load transcript', 'error');
                 loadBtn.textContent = 'Load';
                 loadBtn.disabled = !transcriptSelect.value;
             }
@@ -1209,6 +1683,8 @@
         async function unloadTranscript() {
             try {
                 await fetch('/api/transcripts/unload', { method: 'POST' });
+                hasTranscript = false;
+                loadedFile = null;
                 chatMessages.innerHTML = `
                     <div class="chat-empty">
                         <h2>Chat with your transcripts</h2>
@@ -1216,35 +1692,139 @@
                     </div>
                 `;
                 transcriptSelect.value = '';
+                updateTranscriptSelector();
             } catch (error) {
-                showError('Failed to unload transcript');
+                showToast('Failed to unload transcript', 'error');
             }
         }
+
+        function updateTranscriptSelector() {
+            if (loadedFile) {
+                loadedIndicator.textContent = loadedFile;
+                loadedIndicator.classList.add('visible');
+                unloadBtn.style.display = 'inline-block';
+                transcriptSelect.disabled = true;
+                loadBtn.disabled = true;
+            } else if (isRunning || isTranscribing) {
+                loadedIndicator.textContent = isTranscribing ? 'Processing...' : 'Recording...';
+                loadedIndicator.classList.add('visible');
+                unloadBtn.style.display = 'none';
+                transcriptSelect.disabled = true;
+                loadBtn.disabled = true;
+            } else {
+                loadedIndicator.classList.remove('visible');
+                unloadBtn.style.display = 'none';
+                transcriptSelect.disabled = false;
+                loadBtn.disabled = !transcriptSelect.value;
+            }
+        }
+
+        // ── Event Listeners ──
+        deviceSelect.addEventListener('change', updateRecordBtn);
+
+        recordBtn.addEventListener('click', () => {
+            if (isTranscribing) {
+                resetState();
+            } else if (isRunning) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        });
+
+        sendBtn.addEventListener('click', sendChatMessage);
+
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendChatMessage();
+            }
+        });
+
+        clearChatBtn.addEventListener('click', clearChat);
 
         transcriptSelect.addEventListener('change', () => {
             loadBtn.disabled = !transcriptSelect.value;
         });
 
-        loadBtn.addEventListener('click', loadTranscript);
+        loadBtn.addEventListener('click', () => loadTranscript());
         unloadBtn.addEventListener('click', unloadTranscript);
 
-        // Fetch current status from server
+        // ── WebSocket ──
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                switch (data.type) {
+                    case 'level':
+                        sendLevel(data.value);
+                        break;
+                    case 'transcript':
+                        setTranscriptSource('local');
+                        addTranscriptSegment(data.timestamp, data.text);
+                        break;
+                    case 'transcription_progress':
+                        updateProgress(data.progress, data.processed_seconds, data.total_seconds);
+                        break;
+                    case 'status':
+                        handleStatus(data);
+                        break;
+                    case 'zoom_bot_status':
+                        handleZoomBotStatus(data);
+                        break;
+                    case 'zoom_bot_transcript':
+                        setTranscriptSource('zoom');
+                        addTranscriptSegment(data.timestamp, data.text);
+                        break;
+                    case 'pong':
+                        break;
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                reconnectTimer = setTimeout(connectWebSocket, 2000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        // Keepalive ping
+        setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('ping');
+            }
+        }, 30000);
+
+        // ── Fetch initial status ──
         async function fetchStatus() {
             try {
                 const response = await fetch('/api/status');
                 const status = await response.json();
-                updateStatus(status);
+                handleStatus(status);
             } catch (error) {
                 console.error('Failed to fetch status:', error);
             }
         }
 
-        // Initialize
-        fetchDevices();
-        fetchTranscripts();
-        fetchStatus();  // Get current status in case server has state from previous session
+        // ── Initialize ──
+        updateDevices();
+        loadTranscriptsList();
+        fetchStatus();
         connectWebSocket();
-
     </script>
 </body>
 </html>
