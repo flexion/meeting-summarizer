@@ -261,7 +261,6 @@ jobs:
           ### Additional Information
 
           - Review the [TruffleHog documentation](https://github.com/trufflesecurity/trufflehog) for remediation guidance
-          - Check the repository's \`.trivyignore\` and similar configs if false positives exist
           - This issue was automatically created by the nightly security scan workflow
 
           ### Resources
