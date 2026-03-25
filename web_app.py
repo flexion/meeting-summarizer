@@ -437,6 +437,7 @@ async def broadcast_worker() -> None:
     loop = asyncio.get_event_loop()
     bot_status_interval = 0.5  # 500ms
     last_bot_status_time = 0.0
+    bot_was_active = False
 
     while True:
         # Check level queue
@@ -455,9 +456,17 @@ async def broadcast_worker() -> None:
 
         # Broadcast bot status periodically
         now = time.time()
-        if now - last_bot_status_time >= bot_status_interval and bot_manager.is_active():
-            await manager.broadcast({"type": "zoom_bot_status", **bot_manager.get_status()})
-            last_bot_status_time = now
+        bot_active = bot_manager.is_active()
+        if now - last_bot_status_time >= bot_status_interval:
+            if bot_active:
+                await manager.broadcast({"type": "zoom_bot_status", **bot_manager.get_status()})
+                last_bot_status_time = now
+                bot_was_active = True
+            elif bot_was_active:
+                # Send one final status update so frontend knows the bot stopped
+                await manager.broadcast({"type": "zoom_bot_status", **bot_manager.get_status()})
+                last_bot_status_time = now
+                bot_was_active = False
 
         await asyncio.sleep(0.05)  # 50ms polling interval
 
@@ -966,7 +975,9 @@ async def zoom_bot_start(body: dict[str, Any]) -> JSONResponse:
 async def zoom_bot_stop() -> JSONResponse:
     """Stop the Playwright Zoom bot and transcribe captured audio."""
     if not bot_manager.is_active():
-        return JSONResponse(status_code=400, content={"error": "Bot is not active"})
+        # Idempotent: if bot is already stopped, broadcast idle state and return success
+        await manager.broadcast({"type": "zoom_bot_status", **bot_manager.get_status()})
+        return JSONResponse(content={"status": "stopped", "wav_path": None, "duration": 0})
 
     result = await bot_manager.stop_bot()
     if result:

@@ -1761,6 +1761,8 @@
                     clearTimeout(reconnectTimer);
                     reconnectTimer = null;
                 }
+                // Sync zoom bot state on reconnect
+                fetchZoomBotStatus();
             };
 
             ws.onmessage = (event) => {
@@ -1820,10 +1822,21 @@
             }
         }
 
+        async function fetchZoomBotStatus() {
+            try {
+                const response = await fetch('/api/zoom-bot/status');
+                const data = await response.json();
+                handleZoomBotStatus(data);
+            } catch (error) {
+                console.error('Failed to fetch zoom bot status:', error);
+            }
+        }
+
         // ── Initialize ──
         updateDevices();
         loadTranscriptsList();
         fetchStatus();
+        fetchZoomBotStatus();
         connectWebSocket();
     </script>
 </body>
