@@ -92,12 +92,13 @@ Settings are controlled via environment variables (`.env` file):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| WHISPER_MODEL | large-v3 | tiny / base / small / medium / large-v3 |
+| WHISPER_MODEL | large-v3-turbo | tiny / base / small / medium / large-v3 / large-v3-turbo |
 | DEVICE | cpu | cpu / cuda |
 | COMPUTE_TYPE | int8 | int8 / float16 / float32 |
 | OUTPUT_DIR | transcripts | Where recordings and transcripts are saved |
 | AWS_REGION | us-east-1 | AWS region for Bedrock summarization |
 | BEDROCK_MODEL_ID | (see .env.example) | Claude model for summarization/chat |
+| AUTO_SUMMARIZE | true | Auto-generate summary after transcription (true/false) |
 
 Zoom bot settings: `PLAYWRIGHT_HEADLESS`, `PLAYWRIGHT_TIMEOUT`, `PLAYWRIGHT_DEBUG` (see `.env.example`).
 

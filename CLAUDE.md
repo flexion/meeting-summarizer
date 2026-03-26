@@ -153,12 +153,13 @@ Environment variables via `.env` file:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| WHISPER_MODEL | large-v3 | Model size (tiny/base/small/medium/large-v3) |
+| WHISPER_MODEL | large-v3-turbo | Model size (tiny/base/small/medium/large-v3/large-v3-turbo) |
 | DEVICE | cpu | Compute device (cpu/cuda) |
 | COMPUTE_TYPE | int8 | Quantization (int8/float16/float32) |
 | OUTPUT_DIR | transcripts | Output directory for recordings/transcripts |
 | AWS_REGION | us-east-1 | AWS region for Bedrock |
 | BEDROCK_MODEL_ID | global.anthropic.claude-sonnet-4-5-20250929-v1:0 | Claude model for summarization |
+| AUTO_SUMMARIZE | true | Auto-generate summary after transcription (true/false) |
 | WEB_HOST | 127.0.0.1 | Web server host |
 | WEB_PORT | 8000 | Web server port |
 | PLAYWRIGHT_HEADLESS | true | Run Zoom bot browser headless |
