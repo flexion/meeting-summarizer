@@ -2,7 +2,7 @@
 
 Real-time audio transcription using faster-whisper and BlackHole for macOS. Capture and transcribe audio from your microphone, system audio, or any application. Includes a web UI and a headless Zoom bot for automatic meeting transcription.
 
-<video src="docs/assets/demo.mp4" autoplay loop muted playsinline width="100%"></video>
+![Demo](docs/assets/demo.gif)
 
 > **Three ways to use it:** CLI for quick recordings, Web UI for a visual experience, or Zoom Bot for hands-free meeting capture.
 
