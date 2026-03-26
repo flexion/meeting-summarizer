@@ -259,7 +259,7 @@ PLAYWRIGHT_DEBUG=false           # Enable verbose logging
 PLAYWRIGHT_SCREENSHOTS=true      # Take screenshots on errors
 
 # Transcription settings (existing)
-WHISPER_MODEL=large-v3
+WHISPER_MODEL=large-v3-turbo
 DEVICE=cpu
 COMPUTE_TYPE=int8
 OUTPUT_DIR=transcripts
