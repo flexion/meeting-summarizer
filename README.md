@@ -28,11 +28,15 @@ See [BlackHole docs](https://github.com/ExistentialAudio/BlackHole) for more det
 ```bash
 git clone <repository-url>
 cd meeting-summarizer
+brew install ffmpeg portaudio blackhole-2ch   # system deps (macOS)
 make setup                # creates .venv with uv
 source .venv/bin/activate
 make install              # production deps
 make install-dev          # dev deps + pre-commit hooks (optional)
 ```
+
+> **Note:** `make install` and `make install-dev` will check for required system
+> dependencies (portaudio, ffmpeg) and fail with a helpful message if they are missing.
 
 Optionally copy `.env.example` to `.env` to customize settings (model size, compute type, etc.).
 
