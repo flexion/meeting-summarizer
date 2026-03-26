@@ -1,4 +1,4 @@
-.PHONY: help setup install install-dev install-playwright check-system-deps run run-web run-playwright-test run-breakout-test run-audio-test lint format type-check test audit clean
+.PHONY: help setup install install-dev install-playwright check-system-deps-fatal check-system-deps run run-web run-playwright-test run-breakout-test run-audio-test lint format type-check test audit clean
 
 help:
 	@echo "Live Audio Transcription - Development Commands"
@@ -29,7 +29,7 @@ setup:
 	@echo "Then install dependencies:"
 	@echo "  make install"
 
-install:
+install: check-system-deps-fatal
 	uv sync --no-group dev
 	@echo ""
 	@echo "Dependencies installed!"
@@ -38,7 +38,7 @@ install:
 	@echo "  1. Check system dependencies: make check-system-deps"
 	@echo "  2. Run the script: make run (or uv run python transcribe_live.py)"
 
-install-dev:
+install-dev: check-system-deps-fatal
 	uv sync
 	pre-commit install
 	@echo ""
@@ -50,6 +50,14 @@ install-playwright:
 	@echo ""
 	@echo "Playwright Chromium browser installed!"
 	@echo "Test with: make run-playwright-test URL=https://zoom.us/j/123456789"
+
+check-system-deps-fatal:
+	@echo "Checking required system dependencies..."
+	@missing=0; \
+	if ! brew list portaudio &>/dev/null; then echo "✗ portaudio NOT found - install with: brew install portaudio"; missing=1; fi; \
+	if ! brew list ffmpeg &>/dev/null; then echo "✗ ffmpeg NOT found - install with: brew install ffmpeg"; missing=1; fi; \
+	if [ $$missing -eq 1 ]; then echo ""; echo "Install missing dependencies and re-run."; exit 1; fi
+	@echo "✓ System dependencies OK"
 
 check-system-deps:
 	@echo "Checking system dependencies..."
