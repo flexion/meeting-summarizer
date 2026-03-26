@@ -435,3 +435,128 @@ class TestTranscribeWavFileStreaming:
 
         assert len(result) == 1
         assert result[0]["text"] == "Valid"
+
+
+class TestTranscriptionStateSummary:
+    """Tests for TranscriptionState summary management."""
+
+    def test_initial_summary_state(self, transcription_state):
+        assert transcription_state.summary_text is None
+        assert transcription_state.summary_status == "idle"
+        assert transcription_state.summary_error is None
+        assert transcription_state.summary_transcript_text is None
+
+    def test_set_summary_generating(self, transcription_state):
+        transcription_state.set_summary_generating()
+        assert transcription_state.summary_status == "generating"
+        assert transcription_state.summary_error is None
+
+    def test_set_summary_complete(self, transcription_state):
+        transcription_state.set_summary_complete("Test summary")
+        assert transcription_state.summary_text == "Test summary"
+        assert transcription_state.summary_status == "complete"
+        # Should seed chat history
+        assert len(transcription_state.chat_history) == 2
+        assert transcription_state.chat_history[0]["role"] == "user"
+        assert transcription_state.chat_history[0]["content"] == "Summarize this meeting"
+        assert transcription_state.chat_history[1]["role"] == "assistant"
+        assert transcription_state.chat_history[1]["content"] == "Test summary"
+
+    def test_set_summary_complete_prepends_to_existing_chat(self, transcription_state):
+        transcription_state.chat_history = [{"role": "user", "content": "existing"}]
+        transcription_state.set_summary_complete("Summary text")
+        assert len(transcription_state.chat_history) == 3
+        assert transcription_state.chat_history[0]["content"] == "Summarize this meeting"
+        assert transcription_state.chat_history[2]["content"] == "existing"
+
+    def test_set_summary_error(self, transcription_state):
+        transcription_state.set_summary_error("Something failed")
+        assert transcription_state.summary_status == "error"
+        assert transcription_state.summary_error == "Something failed"
+
+    def test_is_summary_cancelled_when_idle(self, transcription_state):
+        assert transcription_state.is_summary_cancelled() is True
+
+    def test_is_summary_cancelled_when_generating(self, transcription_state):
+        transcription_state.set_summary_generating()
+        assert transcription_state.is_summary_cancelled() is False
+
+    def test_get_summary_state(self, transcription_state):
+        transcription_state.set_summary_complete("Test")
+        state = transcription_state.get_summary_state()
+        assert state["summary"] == "Test"
+        assert state["status"] == "complete"
+        assert state["error"] is None
+
+    def test_get_summary_state_error(self, transcription_state):
+        transcription_state.set_summary_error("Error msg")
+        state = transcription_state.get_summary_state()
+        assert state["summary"] is None
+        assert state["status"] == "error"
+        assert state["error"] == "Error msg"
+
+
+class TestTranscriptionStateStartSummary:
+    """Tests for summary state reset in TranscriptionState.start()."""
+
+    def test_start_resets_summary_state(self, tmp_path):
+        state = TranscriptionState()
+        state.summary_text = "Old summary"
+        state.summary_status = "complete"
+        state.summary_error = "Old error"
+        state.summary_transcript_text = "Old transcript"
+
+        with patch("web_app.OUTPUT_DIR", str(tmp_path)):
+            state.start("Test Device")
+
+        assert state.summary_text is None
+        assert state.summary_status == "idle"
+        assert state.summary_error is None
+        assert state.summary_transcript_text is None
+
+        # Clean up
+        state.wav_file.close()
+
+    def test_start_cancels_running_summary_task(self, tmp_path):
+        state = TranscriptionState()
+        mock_task = MagicMock()
+        mock_task.done.return_value = False
+        state._summary_task = mock_task
+
+        with patch("web_app.OUTPUT_DIR", str(tmp_path)):
+            state.start("Test Device")
+
+        mock_task.cancel.assert_called_once()
+        assert state._summary_task is None
+
+        # Clean up
+        state.wav_file.close()
+
+
+class TestHasAwsCredentials:
+    """Tests for _has_aws_credentials() helper."""
+
+    @patch("web_app.boto3.Session")
+    def test_returns_true_when_credentials_exist(self, mock_session_cls):
+        from web_app import _has_aws_credentials
+
+        mock_session = MagicMock()
+        mock_session.get_credentials.return_value = MagicMock()  # non-None
+        mock_session_cls.return_value = mock_session
+        assert _has_aws_credentials() is True
+
+    @patch("web_app.boto3.Session")
+    def test_returns_false_when_no_credentials(self, mock_session_cls):
+        from web_app import _has_aws_credentials
+
+        mock_session = MagicMock()
+        mock_session.get_credentials.return_value = None
+        mock_session_cls.return_value = mock_session
+        assert _has_aws_credentials() is False
+
+    @patch("web_app.boto3.Session")
+    def test_returns_false_on_exception(self, mock_session_cls):
+        from web_app import _has_aws_credentials
+
+        mock_session_cls.side_effect = Exception("boto3 error")
+        assert _has_aws_credentials() is False
