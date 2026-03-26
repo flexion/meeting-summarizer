@@ -14,7 +14,7 @@ import sys
 import types
 import wave
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 import boto3
 import numpy as np
@@ -22,11 +22,13 @@ import pyaudio
 from dotenv import load_dotenv
 from faster_whisper import WhisperModel
 
+from bedrock_utils import summarize_transcript
+
 # Load environment variables
 load_dotenv()
 
 # Configuration
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3-turbo")
 DEVICE = os.getenv("DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("COMPUTE_TYPE", "int8")
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "transcripts")
@@ -97,48 +99,6 @@ def format_duration(start_time: datetime, end_time: datetime) -> str:
     if hours > 0:
         return f"{hours}:{minutes:02d}:{seconds:02d}"
     return f"{minutes}:{seconds:02d}"
-
-
-def summarize_transcript(transcript_text: str) -> str | None:
-    """Summarize transcript using AWS Bedrock."""
-    if not transcript_text.strip():
-        return None
-
-    try:
-        bedrock = boto3.client("bedrock-runtime", region_name=AWS_REGION)
-
-        prompt = (
-            """Please summarize this meeting transcript. Provide:
-
-1. **Key Points** - Main topics and decisions discussed (bullet points)
-2. **Action Items** - Any tasks, follow-ups, or commitments mentioned (bullet points with owner if mentioned)
-
-Keep it concise and actionable.
-
-Transcript:
-"""
-            + transcript_text
-        )
-
-        response = bedrock.invoke_model(
-            modelId=BEDROCK_MODEL_ID,
-            body=json.dumps(
-                {
-                    "anthropic_version": "bedrock-2023-05-31",
-                    "max_tokens": 1024,
-                    "messages": [{"role": "user", "content": prompt}],
-                }
-            ),
-        )
-
-        result = json.loads(response["body"].read())
-        return cast(str, result["content"][0]["text"])
-
-    except Exception as e:
-        print(f"\n⚠️  Summarization error: {e}")
-        print("   Transcript saved but summary generation failed.")
-        print("   Check AWS credentials and Bedrock access.")
-        return None
 
 
 def list_audio_devices() -> list[dict[str, Any]]:
