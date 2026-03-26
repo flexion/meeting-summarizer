@@ -663,6 +663,30 @@
             font-size: 14px;
         }
 
+        /* Tab styles */
+        .transcript-tabs {
+            display: flex;
+            gap: 0;
+        }
+
+        .transcript-tab {
+            padding: 0 12px;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--text-dim);
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            padding-bottom: 12px;
+            margin-bottom: -1px;
+            transition: all 0.2s;
+        }
+
+        .transcript-tab:hover { color: var(--text-secondary); }
+        .transcript-tab.active { color: var(--text-primary); border-bottom-color: var(--accent-teal); }
+
         #transcript-source-badge {
             font-family: 'Geist Mono', monospace;
             font-size: 10px;
@@ -717,6 +741,83 @@
             color: var(--text-dim);
             font-size: 13px;
         }
+
+        /* Summary content */
+        #summary-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 20px;
+        }
+
+        .summary-spinner {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 24px 0;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent-teal);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .summary-text {
+            font-size: 14px;
+            line-height: 1.7;
+            color: var(--text-primary);
+        }
+
+        .summary-text h1, .summary-text h2, .summary-text h3 {
+            font-size: 15px;
+            font-weight: 600;
+            margin: 16px 0 8px;
+            color: var(--text-primary);
+        }
+
+        .summary-text h1:first-child, .summary-text h2:first-child { margin-top: 0; }
+
+        .summary-text ul, .summary-text ol {
+            padding-left: 20px;
+            margin: 8px 0;
+        }
+
+        .summary-text li { margin-bottom: 4px; }
+
+        .summary-text strong { color: var(--accent-teal); }
+
+        .summary-error {
+            text-align: center;
+            padding: 32px 16px;
+            color: var(--text-secondary);
+        }
+
+        .summary-error .error-detail {
+            font-size: 12px;
+            color: var(--text-dim);
+            margin: 8px 0 16px;
+        }
+
+        .btn-retry {
+            padding: 8px 16px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-retry:hover { border-color: var(--accent-teal); color: var(--accent-teal); }
 
         /* ── Toast ── */
         .toast-container {
@@ -973,11 +1074,17 @@
     <!-- Transcript Panel -->
     <aside id="transcript-panel">
         <div class="transcript-panel-header">
-            <span>Transcript</span>
+            <div class="transcript-tabs">
+                <button class="transcript-tab active" data-tab="transcript" onclick="switchTranscriptTab('transcript')">Transcript</button>
+                <button class="transcript-tab" data-tab="summary" onclick="switchTranscriptTab('summary')">Summary</button>
+            </div>
             <span id="transcript-source-badge"></span>
         </div>
         <div id="transcript-segments">
             <div class="transcript-empty">Transcript segments will appear here during recording or when a Zoom bot is active.</div>
+        </div>
+        <div id="summary-content" style="display:none;">
+            <div class="transcript-empty" id="summary-placeholder">No summary yet.</div>
         </div>
     </aside>
 
@@ -1010,6 +1117,11 @@
         let hasTranscript = false;
         let isSending = false;
         let loadedFile = null;
+
+        // Summary state
+        let summaryStatus = 'idle';
+        let summaryText = '';
+        let summaryError = '';
 
         // ── DOM Refs ──
         const deviceSelect = document.getElementById('device-select');
@@ -1074,6 +1186,18 @@
             if (target) target.classList.add('active');
             const btn = document.querySelector(`.sidebar-btn[data-view="${viewId}"]`);
             if (btn) btn.classList.add('active');
+        }
+
+        // ── Transcript Tab Switching ──
+        function switchTranscriptTab(tab) {
+            document.querySelectorAll('.transcript-tab').forEach(t => t.classList.remove('active'));
+            document.querySelector(`.transcript-tab[data-tab="${tab}"]`).classList.add('active');
+
+            const transcriptDiv = document.getElementById('transcript-segments');
+            const summaryDiv = document.getElementById('summary-content');
+
+            transcriptDiv.style.display = tab === 'transcript' ? 'block' : 'none';
+            summaryDiv.style.display = tab === 'summary' ? 'block' : 'none';
         }
 
         // ── Mobile transcript toggle ──
@@ -1268,6 +1392,55 @@
             transcriptSource = source;
             transcriptSourceBadge.className = source;
             transcriptSourceBadge.textContent = source === 'zoom' ? 'ZOOM' : 'LOCAL';
+        }
+
+        // ── Summary Content ──
+        function updateSummaryContent() {
+            const summaryDiv = document.getElementById('summary-content');
+
+            switch (summaryStatus) {
+                case 'idle':
+                    summaryDiv.innerHTML = '<div class="transcript-empty">No summary yet.</div>';
+                    break;
+                case 'generating':
+                    summaryDiv.innerHTML = '<div class="summary-spinner"><div class="spinner"></div><span>Generating summary...</span></div>';
+                    break;
+                case 'complete':
+                    summaryDiv.innerHTML = '<div class="summary-text">' + marked.parse(summaryText) + '</div>';
+                    break;
+                case 'error':
+                    summaryDiv.innerHTML = `<div class="summary-error">
+                        <p>Summary generation failed</p>
+                        <p class="error-detail">${escapeHtml(summaryError || 'Unknown error')}</p>
+                        <button class="btn-retry" onclick="retrySummary()">Retry</button>
+                    </div>`;
+                    break;
+            }
+        }
+
+        async function retrySummary() {
+            try {
+                const response = await fetch('/api/summary/generate', { method: 'POST' });
+                if (!response.ok) {
+                    const data = await response.json();
+                    showToast(data.error || 'Failed to generate summary', 'error');
+                }
+            } catch (error) {
+                showToast('Failed to generate summary', 'error');
+            }
+        }
+
+        async function fetchSummaryState() {
+            try {
+                const response = await fetch('/api/summary');
+                const data = await response.json();
+                summaryStatus = data.status;
+                summaryText = data.summary;
+                summaryError = data.error;
+                updateSummaryContent();
+            } catch (error) {
+                console.error('Failed to fetch summary state:', error);
+            }
         }
 
         // ── Source Indicator ──
@@ -1664,13 +1837,28 @@
                 const data = await response.json();
                 hasTranscript = true;
                 loadedFile = filename;
+                loadBtn.textContent = 'Load';
 
-                chatMessages.innerHTML = `
-                    <div class="chat-empty">
-                        <h2>Transcript loaded</h2>
-                        <p>${data.segments} segments ready. Ask a question about this meeting!</p>
-                    </div>
-                `;
+                // Update summary state if summary was found in the file
+                if (data.status === 'complete' && data.summary) {
+                    summaryStatus = 'complete';
+                    summaryText = data.summary;
+                    updateSummaryContent();
+
+                    chatMessages.innerHTML = `
+                        <div class="chat-empty">
+                            <h2>Transcript &amp; summary loaded</h2>
+                            <p>${data.segments} segments ready. Summary available in the Summary tab. Ask follow-up questions!</p>
+                        </div>
+                    `;
+                } else {
+                    chatMessages.innerHTML = `
+                        <div class="chat-empty">
+                            <h2>Transcript loaded</h2>
+                            <p>${data.segments} segments ready. Ask a question about this meeting!</p>
+                        </div>
+                    `;
+                }
 
                 updateTranscriptSelector();
             } catch (error) {
@@ -1789,6 +1977,28 @@
                         setTranscriptSource('zoom');
                         addTranscriptSegment(data.timestamp, data.text);
                         break;
+                    case 'summary_started':
+                        summaryStatus = 'generating';
+                        updateSummaryContent();
+                        switchTranscriptTab('summary');
+                        break;
+                    case 'summary_complete':
+                        summaryStatus = 'complete';
+                        summaryText = data.summary;
+                        updateSummaryContent();
+                        switchTranscriptTab('summary');
+                        break;
+                    case 'summary_error':
+                        summaryStatus = 'error';
+                        summaryError = data.error;
+                        updateSummaryContent();
+                        break;
+                    case 'summary_state':
+                        summaryStatus = data.status;
+                        summaryText = data.summary;
+                        summaryError = data.error;
+                        updateSummaryContent();
+                        break;
                     case 'pong':
                         break;
                 }
@@ -1837,6 +2047,7 @@
         loadTranscriptsList();
         fetchStatus();
         fetchZoomBotStatus();
+        fetchSummaryState();
         connectWebSocket();
     </script>
 </body>

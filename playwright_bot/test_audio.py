@@ -70,7 +70,7 @@ def transcribe_wav_file(wav_path: str) -> str | None:
     try:
         from faster_whisper import WhisperModel
 
-        model_name = os.getenv("WHISPER_MODEL", "large-v3")
+        model_name = os.getenv("WHISPER_MODEL", "large-v3-turbo")
         device = os.getenv("DEVICE", "cpu")
         compute_type = os.getenv("COMPUTE_TYPE", "int8")
 

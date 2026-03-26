@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
+from bedrock_utils import summarize_transcript
 from transcribe_live import (
     create_transcript_file,
     create_wav_file,
@@ -15,7 +16,6 @@ from transcribe_live import (
     format_elapsed_time,
     list_audio_devices,
     parse_args,
-    summarize_transcript,
     transcribe_audio_buffer,
     transcribe_wav_file,
 )
@@ -95,7 +95,7 @@ class TestSummarizeTranscript:
         assert summarize_transcript("") is None
         assert summarize_transcript("   ") is None
 
-    @patch("transcribe_live.boto3")
+    @patch("bedrock_utils.boto3")
     def test_successful_summarization(self, mock_boto3):
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
@@ -110,7 +110,7 @@ class TestSummarizeTranscript:
         assert result == "Summary of the meeting"
         mock_boto3.client.assert_called_once_with("bedrock-runtime", region_name="us-east-1")
 
-    @patch("transcribe_live.boto3")
+    @patch("bedrock_utils.boto3")
     def test_api_error_returns_none(self, mock_boto3):
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client

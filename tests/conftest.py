@@ -20,7 +20,7 @@ def sample_transcript_content():
         "Transcript started: 2026-01-15 10:30:00\n"
         "Audio device: BlackHole 2ch\n"
         "Audio file: recording_2026-01-15_10-30-00.wav\n"
-        "Model: large-v3\n"
+        "Model: large-v3-turbo\n"
         "Duration: 5:30\n"
         "\n"
         "[00:01] Hello everyone, welcome to the meeting.\n"

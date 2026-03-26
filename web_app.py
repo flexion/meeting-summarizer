@@ -29,13 +29,14 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from faster_whisper import WhisperModel
 
+from bedrock_utils import summarize_transcript
 from playwright_bot.zoom_web_bot import BotConfig, BotState, ZoomWebBot
 
 # Load environment variables
 load_dotenv()
 
 # Configuration (reuse from transcribe_live.py settings)
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3-turbo")
 DEVICE = os.getenv("DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("COMPUTE_TYPE", "int8")
 
@@ -45,6 +46,20 @@ BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet
 
 # Output directory for transcripts
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "transcripts")
+
+# Auto-summarize configuration
+AUTO_SUMMARIZE = os.getenv("AUTO_SUMMARIZE", "true").lower() == "true"
+
+
+def _has_aws_credentials() -> bool:
+    """Check if AWS credentials are available for Bedrock API calls."""
+    try:
+        session = boto3.Session()
+        credentials = session.get_credentials()
+        return credentials is not None
+    except Exception:
+        return False
+
 
 # Audio settings
 RATE = 16000  # Sample rate in Hz (Whisper uses 16kHz)
@@ -75,6 +90,12 @@ class TranscriptionState:
         self.wav_file: wave.Wave_write | None = None
         self.total_frames: int = 0
         self._lock = threading.Lock()
+        # Summary state
+        self.summary_text: str | None = None
+        self.summary_status: str = "idle"  # "idle", "generating", "complete", "error"
+        self.summary_error: str | None = None
+        self.summary_transcript_text: str | None = None  # for Zoom bot path manual re-gen
+        self._summary_task: asyncio.Task[None] | None = None  # reference to running summary task
 
     def start(self, device_name: str) -> None:
         with self._lock:
@@ -86,6 +107,15 @@ class TranscriptionState:
             self.transcript_segments = []
             self.chat_history = []
             self.total_frames = 0
+
+            # Cancel running summary if any
+            if self._summary_task is not None and not self._summary_task.done():
+                self._summary_task.cancel()
+            self._summary_task = None
+            self.summary_text = None
+            self.summary_status = "idle"
+            self.summary_error = None
+            self.summary_transcript_text = None
 
             # Create output directory
             os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -142,7 +172,7 @@ class TranscriptionState:
             )
 
     def load_transcript_file(self, filepath: str) -> bool:
-        """Load a transcript from a file."""
+        """Load a transcript from a file, including any embedded summary."""
         if not os.path.exists(filepath):
             return False
 
@@ -150,12 +180,29 @@ class TranscriptionState:
             self.transcript_segments = []
             self.chat_history = []
             self.loaded_file = filepath
+            self.summary_text = None
+            self.summary_status = "idle"
+            self.summary_error = None
 
             with open(filepath, encoding="utf-8") as f:
                 content = f.read()
 
+            # Split on summary header if present
+            summary_marker = "## Meeting Summary"
+            if summary_marker in content:
+                transcript_part, summary_part = content.split(summary_marker, 1)
+                self.summary_text = summary_part.strip()
+                self.summary_status = "complete"
+                # Seed chat history with summary for follow-up questions
+                self.chat_history = [
+                    {"role": "user", "content": "Summarize this meeting"},
+                    {"role": "assistant", "content": self.summary_text},
+                ]
+            else:
+                transcript_part = content
+
             # Parse transcript lines (lines starting with timestamps like [00:01:30])
-            for line in content.split("\n"):
+            for line in transcript_part.split("\n"):
                 line = line.strip()
                 if line.startswith("[") and "]" in line:
                     bracket_end = line.index("]")
@@ -176,6 +223,44 @@ class TranscriptionState:
     def clear_chat_history(self) -> None:
         with self._lock:
             self.chat_history = []
+
+    def set_summary_generating(self) -> None:
+        """Set summary status to generating and clear error."""
+        with self._lock:
+            self.summary_status = "generating"
+            self.summary_error = None
+
+    def set_summary_complete(self, summary_text: str) -> None:
+        """Set summary to complete with the given text and seed chat history."""
+        with self._lock:
+            self.summary_text = summary_text
+            self.summary_status = "complete"
+            # Seed chat history (prepend to preserve any existing messages)
+            seed = [
+                {"role": "user", "content": "Summarize this meeting"},
+                {"role": "assistant", "content": summary_text},
+            ]
+            self.chat_history = seed + self.chat_history
+
+    def set_summary_error(self, error: str) -> None:
+        """Set summary status to error with the given message."""
+        with self._lock:
+            self.summary_status = "error"
+            self.summary_error = error
+
+    def is_summary_cancelled(self) -> bool:
+        """Check if summary was cancelled (status reset to idle by start())."""
+        with self._lock:
+            return self.summary_status == "idle"
+
+    def get_summary_state(self) -> dict[str, Any]:
+        """Get current summary state."""
+        with self._lock:
+            return {
+                "summary": self.summary_text,
+                "status": self.summary_status,
+                "error": self.summary_error,
+            }
 
     def get_status(self) -> dict[str, Any]:
         with self._lock:
@@ -334,6 +419,66 @@ def load_model() -> WhisperModel:
     if state.model is None:
         state.model = WhisperModel(WHISPER_MODEL, device=DEVICE, compute_type=COMPUTE_TYPE)
     return state.model
+
+
+async def _generate_summary(transcript_text: str, transcript_path: str) -> None:
+    """Generate a summary for the transcript and broadcast results.
+
+    Args:
+        transcript_text: Full transcript text with timestamps
+        transcript_path: Path to transcript file (may be empty for Zoom bot path)
+    """
+    try:
+        # Set status to generating
+        state.set_summary_generating()
+        await manager.broadcast({"type": "summary_started"})
+
+        # Strip timestamps from transcript text
+        lines = transcript_text.split("\n")
+        plain_text_lines = []
+        for line in lines:
+            if "]" in line:
+                plain_text = line.split("]", 1)[1].strip()
+                if plain_text:
+                    plain_text_lines.append(plain_text)
+            elif line.strip():
+                plain_text_lines.append(line.strip())
+
+        plain_transcript = " ".join(plain_text_lines)
+
+        # Call summarize_transcript via executor (blocking call)
+        loop = asyncio.get_event_loop()
+        summary_text = await loop.run_in_executor(None, summarize_transcript, plain_transcript)
+
+        # Check if task was cancelled (new recording started)
+        if state.is_summary_cancelled():
+            return
+
+        if summary_text is None:
+            error_msg = "Summarization failed. Check AWS credentials and Bedrock access."
+            state.set_summary_error(error_msg)
+            await manager.broadcast({"type": "summary_error", "error": error_msg})
+            return
+
+        # Success - store results and seed chat
+        state.set_summary_complete(summary_text)
+
+        # Append summary to transcript file if path exists
+        if transcript_path and os.path.exists(transcript_path):
+            with open(transcript_path, "a", encoding="utf-8") as f:
+                f.write("\n\n## Meeting Summary\n\n")
+                f.write(summary_text)
+
+        # Broadcast success
+        await manager.broadcast({"type": "summary_complete", "summary": summary_text})
+
+    except Exception as e:
+        # Check if task was cancelled
+        if state.is_summary_cancelled():
+            return
+
+        state.set_summary_error(str(e))
+        await manager.broadcast({"type": "summary_error", "error": str(e)})
 
 
 def transcribe_wav_file_streaming(
@@ -662,6 +807,15 @@ async def stop_transcription() -> JSONResponse:
                 for seg in segments:
                     f.write(f"{seg['timestamp']} {seg['text']}\n")
 
+        # Trigger auto-summary if enabled and recording is long enough
+        if AUTO_SUMMARIZE and recording_duration >= 30 and _has_aws_credentials():
+            transcript_text = state.get_transcript_text()
+            state._summary_task = asyncio.create_task(
+                _generate_summary(transcript_text, state.transcript_path)
+            )
+        elif AUTO_SUMMARIZE and recording_duration >= 30:
+            print("⚠️  Auto-summary skipped: AWS credentials not configured")
+
         # Done transcribing
         state.set_transcribing(False)
         await manager.broadcast({"type": "status", **state.get_status()})
@@ -735,11 +889,18 @@ async def load_transcript(body: dict[str, Any]) -> JSONResponse:
     if state.load_transcript_file(filepath):
         # Broadcast status update
         await manager.broadcast({"type": "status", **state.get_status()})
+        # Broadcast summary state if summary was found in the file
+        summary_state = state.get_summary_state()
+        if summary_state["status"] == "complete":
+            await manager.broadcast(
+                {"type": "summary_complete", "summary": summary_state["summary"]}
+            )
         return JSONResponse(
             content={
                 "status": "loaded",
                 "filename": filename,
                 "segments": len(state.transcript_segments),
+                **summary_state,
             }
         )
     else:
@@ -763,6 +924,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     # Send current status on connect
     await websocket.send_json({"type": "status", **state.get_status()})
+
+    # Send current summary state on connect
+    await websocket.send_json({"type": "summary_state", **state.get_summary_state()})
 
     try:
         while True:
@@ -837,6 +1001,35 @@ async def clear_chat() -> JSONResponse:
     """Clear chat history."""
     state.clear_chat_history()
     return JSONResponse(content={"status": "cleared"})
+
+
+@app.get("/api/summary")
+async def get_summary() -> JSONResponse:
+    """Get current summary state."""
+    return JSONResponse(content=state.get_summary_state())
+
+
+@app.post("/api/summary/generate")
+async def generate_summary() -> JSONResponse:
+    """Manually trigger summary generation."""
+    summary_state = state.get_summary_state()
+    if summary_state["status"] == "generating":
+        return JSONResponse(
+            status_code=409, content={"error": "Summary is already being generated"}
+        )
+
+    # Check for transcript text (local path or Zoom bot path)
+    transcript_text = state.get_transcript_text()
+    if not transcript_text and state.summary_transcript_text:
+        transcript_text = state.summary_transcript_text
+    if not transcript_text:
+        return JSONResponse(status_code=400, content={"error": "No transcript available"})
+
+    # Use transcript_path if available, empty string otherwise
+    transcript_path = state.transcript_path or ""
+
+    state._summary_task = asyncio.create_task(_generate_summary(transcript_text, transcript_path))
+    return JSONResponse(content={"status": "generating"})
 
 
 # =============================================================================
@@ -947,6 +1140,17 @@ async def _transcribe_zoom_audio(wav_path: str, duration: float) -> None:
                     "transcript_path": os.path.basename(transcript_path),
                 }
             )
+
+            # Build transcript text from segments and trigger auto-summary
+            transcript_text = "\n".join(f"{seg['timestamp']} {seg['text']}" for seg in segments)
+            # Store for manual re-generation
+            state.summary_transcript_text = transcript_text
+            if AUTO_SUMMARIZE and duration >= 30 and _has_aws_credentials():
+                state._summary_task = asyncio.create_task(
+                    _generate_summary(transcript_text, transcript_path)
+                )
+            elif AUTO_SUMMARIZE and duration >= 30:
+                print("⚠️  Auto-summary skipped: AWS credentials not configured")
 
     except Exception as e:
         print(f"Zoom transcription failed: {e}")
