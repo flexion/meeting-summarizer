@@ -207,6 +207,44 @@ class TranscriptionState:
         with self._lock:
             self.chat_history = []
 
+    def set_summary_generating(self) -> None:
+        """Set summary status to generating and clear error."""
+        with self._lock:
+            self.summary_status = "generating"
+            self.summary_error = None
+
+    def set_summary_complete(self, summary_text: str) -> None:
+        """Set summary to complete with the given text and seed chat history."""
+        with self._lock:
+            self.summary_text = summary_text
+            self.summary_status = "complete"
+            # Seed chat history (prepend to preserve any existing messages)
+            seed = [
+                {"role": "user", "content": "Summarize this meeting"},
+                {"role": "assistant", "content": summary_text},
+            ]
+            self.chat_history = seed + self.chat_history
+
+    def set_summary_error(self, error: str) -> None:
+        """Set summary status to error with the given message."""
+        with self._lock:
+            self.summary_status = "error"
+            self.summary_error = error
+
+    def is_summary_cancelled(self) -> bool:
+        """Check if summary was cancelled (status reset to idle by start())."""
+        with self._lock:
+            return self.summary_status == "idle"
+
+    def get_summary_state(self) -> dict[str, Any]:
+        """Get current summary state."""
+        with self._lock:
+            return {
+                "summary": self.summary_text,
+                "status": self.summary_status,
+                "error": self.summary_error,
+            }
+
     def get_status(self) -> dict[str, Any]:
         with self._lock:
             elapsed = 0
@@ -375,8 +413,7 @@ async def _generate_summary(transcript_text: str, transcript_path: str) -> None:
     """
     try:
         # Set status to generating
-        state.summary_status = "generating"
-        state.summary_error = None
+        state.set_summary_generating()
         await manager.broadcast({"type": "summary_started"})
 
         # Strip timestamps from transcript text
@@ -384,7 +421,6 @@ async def _generate_summary(transcript_text: str, transcript_path: str) -> None:
         plain_text_lines = []
         for line in lines:
             if "]" in line:
-                # Split on first ], take remainder
                 plain_text = line.split("]", 1)[1].strip()
                 if plain_text:
                     plain_text_lines.append(plain_text)
@@ -398,19 +434,17 @@ async def _generate_summary(transcript_text: str, transcript_path: str) -> None:
         summary_text = await loop.run_in_executor(None, summarize_transcript, plain_transcript)
 
         # Check if task was cancelled (new recording started)
-        if state.summary_status == "idle":
+        if state.is_summary_cancelled():
             return
 
         if summary_text is None:
-            # Summarization failed
-            state.summary_status = "error"
-            state.summary_error = "Summarization failed. Check AWS credentials and Bedrock access."
-            await manager.broadcast({"type": "summary_error", "error": state.summary_error})
+            error_msg = "Summarization failed. Check AWS credentials and Bedrock access."
+            state.set_summary_error(error_msg)
+            await manager.broadcast({"type": "summary_error", "error": error_msg})
             return
 
-        # Success - store results
-        state.summary_text = summary_text
-        state.summary_status = "complete"
+        # Success - store results and seed chat
+        state.set_summary_complete(summary_text)
 
         # Append summary to transcript file if path exists
         if transcript_path and os.path.exists(transcript_path):
@@ -418,22 +452,15 @@ async def _generate_summary(transcript_text: str, transcript_path: str) -> None:
                 f.write("\n\n## Meeting Summary\n\n")
                 f.write(summary_text)
 
-        # Seed chat history
-        state.chat_history = [
-            {"role": "user", "content": "Summarize this meeting"},
-            {"role": "assistant", "content": summary_text},
-        ]
-
         # Broadcast success
         await manager.broadcast({"type": "summary_complete", "summary": summary_text})
 
     except Exception as e:
         # Check if task was cancelled
-        if state.summary_status == "idle":
+        if state.is_summary_cancelled():
             return
 
-        state.summary_status = "error"
-        state.summary_error = str(e)
+        state.set_summary_error(str(e))
         await manager.broadcast({"type": "summary_error", "error": str(e)})
 
 
@@ -875,14 +902,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.send_json({"type": "status", **state.get_status()})
 
     # Send current summary state on connect
-    await websocket.send_json(
-        {
-            "type": "summary_state",
-            "summary": state.summary_text,
-            "status": state.summary_status,
-            "error": state.summary_error,
-        }
-    )
+    await websocket.send_json({"type": "summary_state", **state.get_summary_state()})
 
     try:
         while True:
@@ -962,19 +982,14 @@ async def clear_chat() -> JSONResponse:
 @app.get("/api/summary")
 async def get_summary() -> JSONResponse:
     """Get current summary state."""
-    return JSONResponse(
-        content={
-            "summary": state.summary_text,
-            "status": state.summary_status,
-            "error": state.summary_error,
-        }
-    )
+    return JSONResponse(content=state.get_summary_state())
 
 
 @app.post("/api/summary/generate")
 async def generate_summary() -> JSONResponse:
     """Manually trigger summary generation."""
-    if state.summary_status == "generating":
+    summary_state = state.get_summary_state()
+    if summary_state["status"] == "generating":
         return JSONResponse(
             status_code=409, content={"error": "Summary is already being generated"}
         )
