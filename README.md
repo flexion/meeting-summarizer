@@ -40,6 +40,10 @@ make install-dev          # dev deps + pre-commit hooks (optional)
 
 Optionally copy `.env.example` to `.env` to customize settings (model size, compute type, etc.).
 
+## Architecture
+
+![Architecture](docs/assets/architecture.svg)
+
 ## Usage
 
 ### CLI
