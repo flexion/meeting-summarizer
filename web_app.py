@@ -50,6 +50,17 @@ OUTPUT_DIR = os.getenv("OUTPUT_DIR", "transcripts")
 # Auto-summarize configuration
 AUTO_SUMMARIZE = os.getenv("AUTO_SUMMARIZE", "true").lower() == "true"
 
+
+def _has_aws_credentials() -> bool:
+    """Check if AWS credentials are available for Bedrock API calls."""
+    try:
+        session = boto3.Session()
+        credentials = session.get_credentials()
+        return credentials is not None
+    except Exception:
+        return False
+
+
 # Audio settings
 RATE = 16000  # Sample rate in Hz (Whisper uses 16kHz)
 CHANNELS = 1  # Mono audio
@@ -753,11 +764,13 @@ async def stop_transcription() -> JSONResponse:
                     f.write(f"{seg['timestamp']} {seg['text']}\n")
 
         # Trigger auto-summary if enabled and recording is long enough
-        if AUTO_SUMMARIZE and recording_duration >= 30:
+        if AUTO_SUMMARIZE and recording_duration >= 30 and _has_aws_credentials():
             transcript_text = state.get_transcript_text()
             state._summary_task = asyncio.create_task(
                 _generate_summary(transcript_text, state.transcript_path)
             )
+        elif AUTO_SUMMARIZE and recording_duration >= 30:
+            print("⚠️  Auto-summary skipped: AWS credentials not configured")
 
         # Done transcribing
         state.set_transcribing(False)
@@ -1093,10 +1106,12 @@ async def _transcribe_zoom_audio(wav_path: str, duration: float) -> None:
             transcript_text = "\n".join(f"{seg['timestamp']} {seg['text']}" for seg in segments)
             # Store for manual re-generation
             state.summary_transcript_text = transcript_text
-            if AUTO_SUMMARIZE and duration >= 30:
+            if AUTO_SUMMARIZE and duration >= 30 and _has_aws_credentials():
                 state._summary_task = asyncio.create_task(
                     _generate_summary(transcript_text, transcript_path)
                 )
+            elif AUTO_SUMMARIZE and duration >= 30:
+                print("⚠️  Auto-summary skipped: AWS credentials not configured")
 
     except Exception as e:
         print(f"Zoom transcription failed: {e}")
