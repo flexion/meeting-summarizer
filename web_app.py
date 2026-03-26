@@ -172,7 +172,7 @@ class TranscriptionState:
             )
 
     def load_transcript_file(self, filepath: str) -> bool:
-        """Load a transcript from a file."""
+        """Load a transcript from a file, including any embedded summary."""
         if not os.path.exists(filepath):
             return False
 
@@ -180,12 +180,29 @@ class TranscriptionState:
             self.transcript_segments = []
             self.chat_history = []
             self.loaded_file = filepath
+            self.summary_text = None
+            self.summary_status = "idle"
+            self.summary_error = None
 
             with open(filepath, encoding="utf-8") as f:
                 content = f.read()
 
+            # Split on summary header if present
+            summary_marker = "## Meeting Summary"
+            if summary_marker in content:
+                transcript_part, summary_part = content.split(summary_marker, 1)
+                self.summary_text = summary_part.strip()
+                self.summary_status = "complete"
+                # Seed chat history with summary for follow-up questions
+                self.chat_history = [
+                    {"role": "user", "content": "Summarize this meeting"},
+                    {"role": "assistant", "content": self.summary_text},
+                ]
+            else:
+                transcript_part = content
+
             # Parse transcript lines (lines starting with timestamps like [00:01:30])
-            for line in content.split("\n"):
+            for line in transcript_part.split("\n"):
                 line = line.strip()
                 if line.startswith("[") and "]" in line:
                     bracket_end = line.index("]")
@@ -872,11 +889,18 @@ async def load_transcript(body: dict[str, Any]) -> JSONResponse:
     if state.load_transcript_file(filepath):
         # Broadcast status update
         await manager.broadcast({"type": "status", **state.get_status()})
+        # Broadcast summary state if summary was found in the file
+        summary_state = state.get_summary_state()
+        if summary_state["status"] == "complete":
+            await manager.broadcast(
+                {"type": "summary_complete", "summary": summary_state["summary"]}
+            )
         return JSONResponse(
             content={
                 "status": "loaded",
                 "filename": filename,
                 "segments": len(state.transcript_segments),
+                **summary_state,
             }
         )
     else:

@@ -1839,12 +1839,26 @@
                 loadedFile = filename;
                 loadBtn.textContent = 'Load';
 
-                chatMessages.innerHTML = `
-                    <div class="chat-empty">
-                        <h2>Transcript loaded</h2>
-                        <p>${data.segments} segments ready. Ask a question about this meeting!</p>
-                    </div>
-                `;
+                // Update summary state if summary was found in the file
+                if (data.status === 'complete' && data.summary) {
+                    summaryStatus = 'complete';
+                    summaryText = data.summary;
+                    updateSummaryContent();
+
+                    chatMessages.innerHTML = `
+                        <div class="chat-empty">
+                            <h2>Transcript &amp; summary loaded</h2>
+                            <p>${data.segments} segments ready. Summary available in the Summary tab. Ask follow-up questions!</p>
+                        </div>
+                    `;
+                } else {
+                    chatMessages.innerHTML = `
+                        <div class="chat-empty">
+                            <h2>Transcript loaded</h2>
+                            <p>${data.segments} segments ready. Ask a question about this meeting!</p>
+                        </div>
+                    `;
+                }
 
                 updateTranscriptSelector();
             } catch (error) {
@@ -1973,10 +1987,6 @@
                         summaryText = data.summary;
                         updateSummaryContent();
                         switchTranscriptTab('summary');
-                        // Seed chat with summary
-                        addChatMessage('Summarize this meeting', 'user');
-                        addChatMessage(data.summary, 'assistant');
-                        hasTranscript = true;
                         break;
                     case 'summary_error':
                         summaryStatus = 'error';
